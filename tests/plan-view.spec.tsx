@@ -1,9 +1,11 @@
 /**
  * The Plan page: the revision selector, the per-revision status header, and
- * the document body — all riding the mocked `plans.events` poll. The fold
- * itself is covered by plans-ops.spec; what is pinned here is the page's own
- * behaviour: which revision is on screen, what the header says, and what a
- * newly presented revision does to a manual pick.
+ * the document body — all riding the mocked `plans.events` poll. The fold it
+ * reads is covered by plans-ops.spec; what is pinned here is the page's own
+ * behaviour: which revision is on screen, what the header says, what a newly
+ * presented revision does to a manual pick, that an answer carrying no
+ * revisions never wipes the list already on screen — and that such an answer
+ * still clears a failed load.
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -12,48 +14,25 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import { PlanView } from '../src/client/plans/PlanView.tsx'
-import { PLAN_CHANGED_EVENT } from '../src/plan-events.ts'
+import { PLAN_CHANGED_EVENT, type PlanEntry, type PlanList } from '../src/plan-events.ts'
 import { api } from '../src/client/api.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { t } from '../src/client/locales.ts'
-import type { Context, SidebarSessionEvent } from '../src/context-types.ts'
+import type { Context } from '../src/context-types.ts'
 
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
-/** One exit_plan_mode tool/call (the model presenting a plan). */
-function planCall(seq: number, callId: string, plan: string): SidebarSessionEvent {
-  return {
-    type: 'tool/call',
-    seq,
-    time: 1_700_000_000_000 + seq * 1_000,
-    data: { name: 'exit_plan_mode', callId, arguments: JSON.stringify({ plan }) },
-  }
+/** One revision, as the host would fold it out of the session's plan rows. */
+function entryOf(callId: string, seq: number, plan: string, status: PlanEntry['status'] = 'pending'): PlanEntry {
+  const title = plan.split('\n')[0]!.replace(/^#+\s*/, '')
+  return { callId, seq, time: 1_700_000_000_000 + seq * 1_000, title, body: plan, status }
 }
 
-/** The review outcome for one plan (isError = the user kept planning). */
-function planResult(seq: number, callId: string, isError: boolean): SidebarSessionEvent {
-  return {
-    type: 'tool/result',
-    seq,
-    time: 1_700_000_000_000 + seq * 1_000,
-    data: {
-      message: {
-        source: { kind: 'tool', callId },
-        content: [{ type: 'tool-result', isError, content: [{ type: 'text', text: isError ? 'keep planning' : 'approved' }] }],
-      },
-    },
-  }
-}
-
-/** Serve the log through the route's own delta contract (the host floors an
- *  absent cursor at -1, so a seq-0 log still ships). */
-function mockPlans(events: readonly SidebarSessionEvent[]): void {
-  vi.spyOn(api, 'plansEvents').mockImplementation(async (_scope, afterSeq) => {
-    const cursor = afterSeq ?? -1
-    const shipped = events.filter(event => event.seq > cursor)
-    return { events: [...shipped], lastSeq: shipped.at(-1)?.seq ?? cursor }
-  })
+/** Serve a fixed list through the route (the page renders what it is handed). */
+function mockPlans(entries: readonly PlanEntry[]): void {
+  const list: PlanList = [...entries]
+  vi.spyOn(api, 'plansEvents').mockImplementation(async () => list)
 }
 
 function fakeContext(): Context {
@@ -106,13 +85,15 @@ describe('PlanView', () => {
   })
 
   it('renders the plan, its heading and its pending status', async () => {
-    mockPlans([planCall(1, 'p1', '# 重构方案\n\n第一步。')])
+    mockPlans([entryOf('p1', 1, '# 重构方案\n\n第一步。')])
     const { container, root } = mount()
     try {
       await flush()
       expect(options(container)).toEqual(['v1 · 重构方案'])
       expect(container.textContent).toContain(t('planStatusPending'))
-      expect(container.textContent).toContain('重构方案')
+      // A body-only string: the title also renders inside the <option>, so
+      // asserting on the heading would pass even with no document at all.
+      expect(container.textContent).toContain('第一步。')
       expect(container.textContent).toContain(t('planCopy'))
     } finally {
       act(() => { root.unmount() })
@@ -121,9 +102,8 @@ describe('PlanView', () => {
 
   it('offers every revision oldest-first and lands on the newest', async () => {
     mockPlans([
-      planCall(1, 'p1', '# 第一版'),
-      planResult(2, 'p1', true),
-      planCall(3, 'p2', '# 第二版'),
+      entryOf('p1', 1, '# 第一版\n\n旧正文。', 'unadopted'),
+      entryOf('p2', 3, '# 第二版\n\n新正文。'),
     ])
     const { container, root } = mount()
     try {
@@ -131,8 +111,10 @@ describe('PlanView', () => {
       expect(options(container)).toEqual(['v1 · 第一版', 'v2 · 第二版'])
       const select = container.querySelector('select')!
       expect(select.value).toBe('p2')
-      expect(container.textContent).toContain('第二版')
-      expect(container.textContent).not.toContain('第一版。')
+      // Body strings, not titles — the titles are already on screen in the
+      // <option> labels, which is what made the old assertions vacuous.
+      expect(container.textContent).toContain('新正文')
+      expect(container.textContent).not.toContain('旧正文')
       // The settled first revision keeps its own state; the new one is pending.
       expect(container.textContent).toContain(t('planStatusPending'))
     } finally {
@@ -142,9 +124,8 @@ describe('PlanView', () => {
 
   it('switching the selector shows that revision and its state', async () => {
     mockPlans([
-      planCall(1, 'p1', '# 第一版\n\n旧正文。'),
-      planResult(2, 'p1', false),
-      planCall(3, 'p2', '# 第二版\n\n新正文。'),
+      entryOf('p1', 1, '# 第一版\n\n旧正文。', 'approved'),
+      entryOf('p2', 3, '# 第二版\n\n新正文。'),
     ])
     const { container, root } = mount()
     try {
@@ -166,7 +147,10 @@ describe('PlanView', () => {
   })
 
   it('a newly presented revision takes the page back to the newest', async () => {
-    mockPlans([planCall(1, 'p1', '# 第一版\n\n旧正文。')])
+    const first: PlanList = [entryOf('p1', 1, '# 第一版\n\n旧正文。')]
+    const second: PlanList = [...first, entryOf('p2', 3, '# 第二版\n\n新正文。')]
+    let call = 0
+    vi.spyOn(api, 'plansEvents').mockImplementation(async () => (call++ === 0 ? first : second))
     const { container, root } = mount()
     try {
       await flush()
@@ -179,7 +163,6 @@ describe('PlanView', () => {
 
       // The model presents a second revision; the push feed relays it (the
       // page listens on the window, since it lives in a lazy chunk).
-      mockPlans([planCall(1, 'p1', '# 第一版\n\n旧正文。'), planCall(3, 'p2', '# 第二版\n\n新正文。')])
       act(() => { window.dispatchEvent(new Event(PLAN_CHANGED_EVENT)) })
       await flush()
 
@@ -192,7 +175,7 @@ describe('PlanView', () => {
 
   it('copies the plan source, not the rendered document', async () => {
     const written = vi.spyOn(primitives, 'writeClipboard').mockResolvedValue(true)
-    mockPlans([planCall(1, 'p1', '# 复制我\n\n正文。')])
+    mockPlans([entryOf('p1', 1, '# 复制我\n\n正文。')])
     const { container, root } = mount()
     try {
       await flush()
@@ -206,46 +189,44 @@ describe('PlanView', () => {
     }
   })
 
-  it('a push-triggered pull racing the poll cannot double rows into the window', async () => {
-    // The push handler fires `void pull()` OUTSIDE the poller's one-at-a-time
-    // channel, so it races the in-flight tick: two responses at the SAME
-    // afterSeq. Here the STALE response settles last — the ordering that used
-    // to re-append its batch over the capped window and evict the newer
-    // revision (the call-id fold hides the duplicate rows until then).
-    const filler = (seq: number): SidebarSessionEvent => ({
-      type: 'tool/call', seq, time: seq, data: { name: 'bash', callId: `b${seq}`, arguments: '{}' },
-    })
-    const first = [
-      ...Array.from({ length: 1_998 }, (_, index) => filler(index + 1)),
-      planCall(1_999, 'p1', '# 第一版'),
-      planResult(2_000, 'p1', false),
-    ]
-    const second = [...first, planCall(2_001, 'p2', '# 第二版'), planResult(2_002, 'p2', true)]
-    const waiters: Array<() => void> = []
+  it('keeps the revisions on screen when a poll answers with none', async () => {
+    // "The log is unreadable right now" is not "this session has no plans":
+    // blanking the list would throw away an archive the reader is looking at,
+    // and the next readable poll would not bring it back on its own.
+    const entries: PlanList = [entryOf('p1', 1, '# 第一版\n\n旧正文。')]
     let call = 0
-    vi.spyOn(api, 'plansEvents').mockImplementation(async (_scope, afterSeq) => {
-      const batch = call++ === 0 ? first : second
-      await new Promise<void>((resolve) => { waiters.push(resolve) })
-      const cursor = afterSeq ?? -1
-      const shipped = batch.filter(event => event.seq > cursor)
-      return { events: shipped, lastSeq: shipped.at(-1)?.seq ?? cursor }
+    vi.spyOn(api, 'plansEvents').mockImplementation(async () => {
+      // The first answer lands the revision; every later one is empty.
+      return call++ === 0 ? entries : []
     })
     const { container, root } = mount()
     try {
-      // The immediate poll hangs at afterSeq 0; the push fires a SECOND pull
-      // before any response has advanced the cursor.
+      await flush()
+      expect(container.querySelector('select')!.value).toBe('p1')
       act(() => { window.dispatchEvent(new Event(PLAN_CHANGED_EVENT)) })
-      expect(waiters.length).toBe(2)
-      // The NEWER response settles first and fills the window past its cap.
-      await act(async () => { waiters[1]!(); await Promise.resolve() })
       await flush()
-      expect(options(container)).toEqual(['v1 · 第一版', 'v2 · 第二版'])
-      // The STALE response lands last: every row it carries is already
-      // folded, so it must contribute nothing — revision 2 stays on the page
-      // instead of being squeezed off the capped window by duplicate rows.
-      await act(async () => { waiters[0]!(); await Promise.resolve() })
+      expect(container.querySelector('select')).not.toBeNull()
+      expect(container.textContent).toContain('旧正文')
+    } finally {
+      act(() => { root.unmount() })
+    }
+  })
+
+  it('clears a failed load once any answer arrives, an empty one included', async () => {
+    // A rejected poll says "could not read"; the empty answer that follows is a
+    // successful "no plans" — which is most sessions. Leaving the flag set
+    // would keep the error on screen long after the host recovered.
+    const plansEvents = vi.spyOn(api, 'plansEvents')
+    plansEvents.mockRejectedValueOnce(new Error('offline'))
+    const { container, root } = mount()
+    try {
       await flush()
-      expect(options(container)).toEqual(['v1 · 第一版', 'v2 · 第二版'])
+      expect(container.textContent).toContain(t('planLoadError'))
+      plansEvents.mockResolvedValue([])
+      act(() => { window.dispatchEvent(new Event(PLAN_CHANGED_EVENT)) })
+      await flush()
+      expect(container.textContent).toContain(t('planEmpty'))
+      expect(container.textContent).not.toContain(t('planLoadError'))
     } finally {
       act(() => { root.unmount() })
     }

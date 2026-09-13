@@ -1,9 +1,11 @@
 /**
  * Plan page data layer: folding a session event log into the plan revisions
- * the model presented through the host's `exit_plan_mode` tool.
+ * the model presented through the host's `exit_plan_mode` tool. The fold runs
+ * host-side now (src/plan-events.ts); these cases are the acceptance rules it
+ * must keep, whichever end calls it.
  */
 import { describe, expect, it } from 'vitest'
-import { extractPlans } from '../src/client/plans/ops.ts'
+import { derivePlans } from '../src/plan-events.ts'
 import type { SidebarSessionEvent } from '../src/context-types.ts'
 
 /** One synthetic session event. */
@@ -26,9 +28,9 @@ function result(seq: number, callId: string, text: string, isError = false, time
   })
 }
 
-describe('extractPlans', () => {
+describe('derivePlans', () => {
   it('reads a plan from the call and leaves it pending until its result lands', () => {
-    const plans = extractPlans([call(1, 'p1', { plan: '# 重构方案\n\n第一步。' })])
+    const plans = derivePlans([call(1, 'p1', { plan: '# 重构方案\n\n第一步。' })])
     expect(plans).toHaveLength(1)
     expect(plans[0]).toMatchObject({
       callId: 'p1',
@@ -41,7 +43,7 @@ describe('extractPlans', () => {
   })
 
   it('settles on approval when the result is not an error', () => {
-    const plans = extractPlans([
+    const plans = derivePlans([
       call(1, 'p1', { plan: '# 方案' }),
       result(2, 'p1', 'Plan approved — plan mode exited; carry out the plan starting with your next step.', false, 42),
     ])
@@ -50,7 +52,7 @@ describe('extractPlans', () => {
   })
 
   it('settles as unadopted when the result is an error (keep planning, or a dismissed review)', () => {
-    const plans = extractPlans([
+    const plans = derivePlans([
       call(1, 'p1', { plan: '# 方案' }),
       result(2, 'p1', 'The user chose to keep planning; revise the plan and present it again.', true),
     ])
@@ -58,7 +60,7 @@ describe('extractPlans', () => {
   })
 
   it('keeps every revision in submission order, oldest first', () => {
-    const plans = extractPlans([
+    const plans = derivePlans([
       call(1, 'v1', { plan: '# 第一版' }),
       result(2, 'v1', 'keep planning', true),
       call(3, 'v2', { plan: '# 第二版' }),
@@ -71,12 +73,12 @@ describe('extractPlans', () => {
   })
 
   it('reports a fresh revision after a settled one as pending again', () => {
-    const plans = extractPlans([call(1, 'v1', { plan: '# 一' }), result(2, 'v1', 'ok'), call(3, 'v2', { plan: '# 二' })])
+    const plans = derivePlans([call(1, 'v1', { plan: '# 一' }), result(2, 'v1', 'ok'), call(3, 'v2', { plan: '# 二' })])
     expect(plans.map(plan => plan.status)).toEqual(['approved', 'pending'])
   })
 
   it('takes the first heading of any level, like the host review card does', () => {
-    const plans = extractPlans([call(1, 'p1', { plan: '#\n# 真正的标题\n正文' })])
+    const plans = derivePlans([call(1, 'p1', { plan: '#\n# 真正的标题\n正文' })])
     expect(plans[0]!.title).toBe('真正的标题')
   })
 
@@ -84,7 +86,7 @@ describe('extractPlans', () => {
     // The host validates `/^#\s+\S/` INSIDE execute — its tool/call row is
     // already logged by then, so these calls are rows the user never saw a
     // review card for. Surfacing them would invent a phantom plan.
-    const plans = extractPlans([
+    const plans = derivePlans([
       call(1, 'bad1', { plan: '## 二级标题开头' }),
       call(2, 'bad2', { plan: '没有标题的正文' }),
       call(3, 'bad3', { plan: '   ' }),
@@ -105,12 +107,12 @@ describe('extractPlans', () => {
       callId: 'not-string',
       arguments: JSON.stringify({ plan: 42 }),
     })
-    const plans = extractPlans([broken, notAString, call(3, 'good', { plan: '# 照常显示' })])
+    const plans = derivePlans([broken, notAString, call(3, 'good', { plan: '# 照常显示' })])
     expect(plans.map(plan => plan.callId)).toEqual(['good'])
   })
 
   it('ignores other tools and results that pair with no plan call', () => {
-    const plans = extractPlans([
+    const plans = derivePlans([
       call(1, 'p1', { plan: '# 计划' }),
       ev('tool/call', 2, 2, { name: 'bash', callId: 'b1', arguments: '{"command":"ls"}' }),
       result(3, 'b1', 'ok'),
@@ -122,7 +124,7 @@ describe('extractPlans', () => {
 
   it('ignores a stray result that carries no call id at all', () => {
     const stray: SidebarSessionEvent = ev('tool/result', 2, 2, { message: { content: [] } })
-    const plans = extractPlans([call(1, 'p1', { plan: '# 计划' }), stray])
+    const plans = derivePlans([call(1, 'p1', { plan: '# 计划' }), stray])
     expect(plans[0]!.status).toBe('pending')
   })
 
@@ -134,7 +136,7 @@ describe('extractPlans', () => {
       error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
       message: { source: { kind: 'tool', callId: 'p1' }, content: [{ type: 'tool-result', isError: true, content: [] }] },
     })
-    const plans = extractPlans([
+    const plans = derivePlans([
       call(1, 'p1', { plan: '# 未送达的计划' }),
       aborted,
       call(3, 'p2', { plan: '# 正常计划' }),
@@ -152,16 +154,16 @@ describe('extractPlans', () => {
       error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
       message: { source: { kind: 'tool', callId: 'p1' }, content: [{ type: 'tool-result', isError: true, content: [] }] },
     })
-    expect(extractPlans([call(1, 'p1', { plan: '# 未送达的计划' })]).map(plan => plan.status)).toEqual(['pending'])
-    expect(extractPlans([call(1, 'p1', { plan: '# 未送达的计划' }), aborted])).toEqual([])
+    expect(derivePlans([call(1, 'p1', { plan: '# 未送达的计划' })]).map(plan => plan.status)).toEqual(['pending'])
+    expect(derivePlans([call(1, 'p1', { plan: '# 未送达的计划' }), aborted])).toEqual([])
   })
 
   it('trims the surrounding blank lines of a body but keeps its interior intact', () => {
-    const plans = extractPlans([call(1, 'p1', { plan: '\n\n# 标题\n\n第一段\n\n第二段\n\n' })])
+    const plans = derivePlans([call(1, 'p1', { plan: '\n\n# 标题\n\n第一段\n\n第二段\n\n' })])
     expect(plans[0]!.body).toBe('# 标题\n\n第一段\n\n第二段')
   })
 
   it('returns nothing for an empty log', () => {
-    expect(extractPlans([])).toEqual([])
+    expect(derivePlans([])).toEqual([])
   })
 })

@@ -1,20 +1,24 @@
 /**
  * The Plan page: the plan revisions presented in this session, one document
- * at a time. The page holds no plan text of its own — it accumulates the rows
- * 'plans.events' serves and folds them with `extractPlans`. Polling is the
- * authoritative refresh; the push feed only makes it immediate.
+ * at a time. The page holds no plan text and folds nothing — the route ships
+ * the revisions the host derived from the session log, and every poll simply
+ * replaces the list. Re-rendering an unchanged list is cheap because the
+ * markdown work below is keyed on the body string, so an idle tick costs a
+ * shallow compare and no DOM churn.
+ *
+ * One rule the poller must keep, because this list is the only copy the page
+ * has: an answer that carries no revisions NEVER clears what is shown — a
+ * host restart or a transient failure must not wipe the history.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SidebarSessionEvent } from '../../context-types.ts'
-import { PLAN_CHANGED_EVENT, PLAN_EVENTS_WINDOW } from '../../plan-events.ts'
+import { PLAN_CHANGED_EVENT, type PlanEntry, type PlanStatus } from '../../plan-events.ts'
 import { api } from '../api.ts'
 import { analyzeMarkdownHtml } from '../markdown-html.ts'
 import { MarkdownDocument, type MarkdownHtmlMedia } from '../MarkdownHtml.tsx'
 import { relativeTime, t } from '../locales.ts'
 import type { TabComponentProps } from '../service.ts'
 import { usePolling } from '../use-polling.ts'
-import { extractPlans, type PlanEntry, type PlanStatus } from './ops.ts'
 import css from './plan.module.css'
 
 /** The visible tick. Slower than the changes lens: a plan changes on
@@ -38,52 +42,39 @@ export function PlanView({ scope, visible }: TabComponentProps) {
   // The revision the user picked by hand. Cleared whenever a NEW revision
   // arrives, so a submission always lands on the page (see `pull`).
   const [pinned, setPinned] = useState<string | undefined>(undefined)
-  const eventsRef = useRef<readonly SidebarSessionEvent[]>([])
-  const seqRef = useRef(0)
   const latestRef = useRef<string | undefined>(undefined)
   const pollGen = useRef(0)
 
   const pull = useCallback(async (): Promise<void> => {
     const generation = pollGen.current
     try {
-      const { events, lastSeq } = await api.plansEvents(scope, seqRef.current)
+      const entries = await api.plansEvents(scope)
       if (generation !== pollGen.current) return
-      if (events.length === 0 && lastSeq <= seqRef.current) {
-        // Nothing new: re-folding the same window would re-parse every plan
-        // body and hand React a fresh array — a full re-render per idle tick.
+      // An empty answer is "unknown", not "no plans": the session's log can be
+      // unreadable for a moment (a host restart, a rehydrating store), and
+      // blanking a list the reader is looking at is worse than a stale one.
+      // Nothing on screen yet means the empty state speaks for itself.
+      //
+      // It still CLEARS the failure flag: "no plans" is a successful answer,
+      // and leaving the flag set would keep the error on screen after a
+      // recovered host — for every session that has no plans, which is most.
+      // Behind the generation guard, so a stale answer cannot clear the
+      // current session's flag.
+      if (entries.length === 0) {
         setFailed(false)
         return
       }
-      if (events.length > 0) {
-        // The push handler's `void pull()` bypasses the poller's one-at-a-time
-        // channel, so it can race an in-flight tick: two responses at the same
-        // afterSeq carrying the same batch. Responses are seq-ascending, so
-        // only rows NEWER than everything already folded are appended — a
-        // racing duplicate contributes nothing instead of doubling its rows
-        // into the window cap (the call-id fold hides that until the window
-        // overflows and evicts older revisions).
-        const floor = eventsRef.current.at(-1)?.seq ?? -1
-        const fresh = events.filter(event => event.seq > floor)
-        if (fresh.length > 0) {
-          const merged = [...eventsRef.current, ...fresh]
-          eventsRef.current = merged.length > PLAN_EVENTS_WINDOW
-            ? merged.slice(merged.length - PLAN_EVENTS_WINDOW)
-            : merged
-        }
-      }
-      if (lastSeq > seqRef.current) seqRef.current = lastSeq
-      const folded = extractPlans(eventsRef.current)
       // A revision arriving is an explicit "review me": drop a manual pick so
       // the page shows what was just presented.
-      const latest = folded.at(-1)?.callId
+      const latest = entries.at(-1)?.callId
       if (latest !== latestRef.current) {
         latestRef.current = latest
         setPinned(undefined)
       }
-      setPlans(folded)
+      setPlans(entries)
       setFailed(false)
     } catch {
-      // Offline / route unavailable: keep the last fold and only say so while
+      // Offline / route unavailable: keep the last list and only say so while
       // nothing has ever loaded.
       if (generation === pollGen.current) setFailed(true)
     }
@@ -95,8 +86,6 @@ export function PlanView({ scope, visible }: TabComponentProps) {
   // A new session starts from its own log — never from the previous one's.
   useEffect(() => {
     pollGen.current += 1
-    eventsRef.current = []
-    seqRef.current = 0
     latestRef.current = undefined
     setPlans([])
     setPinned(undefined)

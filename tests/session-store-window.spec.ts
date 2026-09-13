@@ -1,13 +1,13 @@
 /**
- * `sessionEventWindow` merge semantics (src/session-store.ts). The plans route
- * is the only extraRows caller and pays the merge on every attach poll, so the
- * fast path (extra rows all overlapped by the base → keep `base` untouched)
- * must not move any observable value. These tests pin the WINDOW CONTRACT —
- * merge order, cap, tail, cursor — across both merge paths; the plans route's
- * own row filtering lives in plans-routes.spec.ts.
+ * `sessionEventWindow` semantics (src/session-store.ts) — the shared window
+ * every session-backed route reads through: cursor gating, the route's own
+ * row cap, the live snapshot with the persisted log as fallback, and an empty
+ * window that still answers a reusable cursor. `changes.ops` is the caller;
+ * the plans route folds host-side and reads the same window.
  */
 import { describe, expect, it } from 'vitest'
 import { sessionEventWindow } from '../src/session-store.ts'
+import { SidebarError } from '../src/wire.ts'
 import type { Context, SidebarSessionEvent } from '../src/context-types.ts'
 
 /** One generic log row (the window is shape-agnostic: take sees it all). */
@@ -18,7 +18,7 @@ function row(seq: number): SidebarSessionEvent {
 /** A context serving one live store session and an optional persistence face. */
 function ctxWith(
   live: readonly SidebarSessionEvent[] | undefined,
-  persisted: readonly SidebarSessionEvent[] | undefined,
+  persisted?: readonly SidebarSessionEvent[] | undefined,
 ): Context {
   return {
     sessions: {
@@ -42,134 +42,59 @@ const takeAll = (
   afterSeq: number,
 ): readonly SidebarSessionEvent[] => log.filter(event => event.seq > afterSeq)
 
-/** takeAll with a tail cap (what the routes do on top of the predicate). */
-function takeCapped(cap: number) {
-  return (log: readonly SidebarSessionEvent[], afterSeq: number): readonly SidebarSessionEvent[] => {
-    const filtered = log.filter(event => event.seq > afterSeq)
-    return filtered.length > cap ? filtered.slice(filtered.length - cap) : filtered
-  }
-}
-
-describe('sessionEventWindow merge', () => {
-  it('keeps the base untouched when the extra rows all overlap it', async () => {
-    // Same seqs as the base but DISTINCT row objects: the old merge would
-    // replace every base row with its mirror copy; the fast path must keep
-    // the store's own rows (same seq ⇒ same event, so the VALUES agree).
-    const base = [row(0), row(1), row(2)]
-    const { events, lastSeq } = await sessionEventWindow(
-      ctxWith(base, undefined),
-      { sessionId: 's' },
-      takeAll,
-      () => [row(0), row(1), row(2)],
-    )
-    expect(events.map(event => event.seq)).toEqual([0, 1, 2])
-    expect(lastSeq).toBe(2)
-    // Fast-path sentinel: the shipped rows ARE the base rows. A regression
-    // back to the unconditional Map merge swaps in the mirror copies and
-    // fails this identity check.
-    expect(events[0]).toBe(base[0])
-    expect(events[2]).toBe(base[2])
+describe('sessionEventWindow', () => {
+  it('serves the whole log for an absent cursor, and gates on an explicit one', async () => {
+    const log = [row(0), row(1), row(2)]
+    const whole = await sessionEventWindow(ctxWith(log), { sessionId: 's' }, takeAll)
+    // A log that opens on seq 0 still ships: the absent cursor floors at -1.
+    expect(whole.events.map(event => event.seq)).toEqual([0, 1, 2])
+    expect(whole.lastSeq).toBe(2)
+    const gated = await sessionEventWindow(ctxWith(log), { sessionId: 's', afterSeq: 1 }, takeAll)
+    expect(gated.events.map(event => event.seq)).toEqual([2])
+    expect(gated.lastSeq).toBe(2)
   })
 
-  it('merges rows the base lacks (the store frozen after a host restart)', async () => {
-    const base = [row(0), row(1), row(2)]
-    const extra = [row(0), row(1), row(2), row(3), row(4)]
-    const { events, lastSeq } = await sessionEventWindow(
-      ctxWith(base, undefined),
-      { sessionId: 's' },
-      takeAll,
-      () => extra,
-    )
-    // Ascending order preserved, the gap rows included, cursor on the tail.
-    expect(events.map(event => event.seq)).toEqual([0, 1, 2, 3, 4])
-    expect(lastSeq).toBe(4)
+  it('answers a drained window with the cursor itself, floored at 0', async () => {
+    const drained = await sessionEventWindow(ctxWith([row(0)]), { sessionId: 's', afterSeq: 9 }, takeAll)
+    expect(drained.events).toEqual([])
+    expect(drained.lastSeq).toBe(9)
+    const fresh = await sessionEventWindow(ctxWith([]), { sessionId: 's' }, takeAll)
+    expect(fresh.events).toEqual([])
+    expect(fresh.lastSeq).toBe(0)
   })
 
-  it('an empty extra behaves exactly like no mirror', async () => {
-    const base = [row(1), row(2)]
-    const bare = await sessionEventWindow(ctxWith(base, undefined), { sessionId: 's' }, takeAll)
-    const mirrored = await sessionEventWindow(
-      ctxWith(base, undefined),
-      { sessionId: 's' },
-      takeAll,
-      () => [],
-    )
-    expect(mirrored).toEqual(bare)
-    expect(bare.events.map(event => event.seq)).toEqual([1, 2])
+  it('applies the route cap to the log tail after the cursor', async () => {
+    const log = [row(0), row(1), row(2), row(3), row(4)]
+    const capped = await sessionEventWindow(ctxWith(log), { sessionId: 's' }, (rows, afterSeq) => {
+      const filtered = takeAll(rows, afterSeq)
+      return filtered.slice(Math.max(0, filtered.length - 2))
+    })
+    expect(capped.events.map(event => event.seq)).toEqual([3, 4])
+    expect(capped.lastSeq).toBe(4)
   })
 
-  it('an empty base serves rows that exist only in the extra', async () => {
-    const { events, lastSeq } = await sessionEventWindow(
-      ctxWith(undefined, undefined),
-      { sessionId: 's' },
-      takeAll,
-      () => [row(5), row(6)],
-    )
-    expect(events.map(event => event.seq)).toEqual([5, 6])
-    expect(lastSeq).toBe(6)
-  })
-
-  it('a single-row base fully overlapped by the extra takes the fast path', async () => {
-    const base = [row(5)]
-    const { events, lastSeq } = await sessionEventWindow(
-      ctxWith(base, undefined),
-      { sessionId: 's' },
-      takeAll,
-      () => [row(5)],
-    )
-    expect(events.map(event => event.seq)).toEqual([5])
-    expect(lastSeq).toBe(5)
-    expect(events[0]).toBe(base[0])
-  })
-
-  it('cap and tail semantics hold identically on the merged log', async () => {
-    // The base freezes at seq 4; the mirror carries two rows beyond it. The
-    // take sees the WHOLE merged log before capping — the tail rows ship,
-    // the head rolls off, and the cursor is the newest SHIPPED seq.
-    const base = [row(0), row(1), row(2), row(3), row(4)]
-    const extra = [row(0), row(1), row(2), row(3), row(4), row(5), row(6)]
-    const { events, lastSeq } = await sessionEventWindow(
-      ctxWith(base, undefined),
-      { sessionId: 's' },
-      takeCapped(3),
-      () => extra,
-    )
-    expect(events.map(event => event.seq)).toEqual([4, 5, 6])
-    expect(lastSeq).toBe(6)
-  })
-
-  it('the persisted log backs the base, and a fully overlapped mirror stays on the fast path', async () => {
+  it('falls back to the persisted log when the live store has no session', async () => {
     const persisted = [row(0), row(1)]
-    const { events, lastSeq } = await sessionEventWindow(
-      ctxWith(undefined, persisted),
-      { sessionId: 's' },
-      takeAll,
-      () => [row(0), row(1)],
-    )
+    const { events, lastSeq } = await sessionEventWindow(ctxWith(undefined, persisted), { sessionId: 's' }, takeAll)
     expect(events.map(event => event.seq)).toEqual([0, 1])
     expect(lastSeq).toBe(1)
     expect(events[0]).toBe(persisted[0])
   })
 
-  it('afterSeq still gates the window and an empty window reuses its cursor', async () => {
-    const base = [row(0), row(1), row(2)]
-    const extra = () => [row(0), row(1), row(2), row(3), row(4)]
-    const gated = await sessionEventWindow(
-      ctxWith(base, undefined), { sessionId: 's', afterSeq: 2 }, takeAll, extra,
-    )
-    expect(gated.events.map(event => event.seq)).toEqual([3, 4])
-    expect(gated.lastSeq).toBe(4)
-    // Past the end: no rows, but the cursor comes back so the next poll
-    // resumes exactly here (floored at 0 for an absent cursor).
-    const drained = await sessionEventWindow(
-      ctxWith(base, undefined), { sessionId: 's', afterSeq: 9 }, takeAll, extra,
-    )
-    expect(drained.events).toEqual([])
-    expect(drained.lastSeq).toBe(9)
-    const fresh = await sessionEventWindow(
-      ctxWith([], undefined), { sessionId: 's' }, takeAll, () => [],
-    )
-    expect(fresh.events).toEqual([])
-    expect(fresh.lastSeq).toBe(0)
+  it('answers an empty window (never an error) when neither source is available', async () => {
+    const { events, lastSeq } = await sessionEventWindow(ctxWith(undefined), { sessionId: 's' }, takeAll)
+    expect(events).toEqual([])
+    expect(lastSeq).toBe(0)
+  })
+
+  it('rejects a malformed cursor and a missing sessionId', async () => {
+    // Input validation is shared, so the plans route inherits it even though
+    // its own protocol no longer carries a cursor.
+    await expect(sessionEventWindow(ctxWith([]), { sessionId: 's', afterSeq: -1 }, takeAll))
+      .rejects.toBeInstanceOf(SidebarError)
+    await expect(sessionEventWindow(ctxWith([]), { sessionId: 's', afterSeq: 1.5 }, takeAll))
+      .rejects.toBeInstanceOf(SidebarError)
+    await expect(sessionEventWindow(ctxWith([]), { sessionId: '' }, takeAll))
+      .rejects.toBeInstanceOf(SidebarError)
   })
 })

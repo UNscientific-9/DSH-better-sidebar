@@ -10,110 +10,77 @@
  * that never reaches the session log. So the page reads the session's event
  * log, the same preference the changes lens follows for file operations.
  *
- * The exit tool is matched by NAME only (`dsh-plan-mode` is not a dependency
- * of this plugin) plus the host's OWN acceptance rule for its body — both
- * live in `./plan-events.ts`, shared with the client's plan page.
- *
  * Two faces:
  *
- * - 'plans.events' — the plan rows of one session: every accepted exit-tool
- *   call plus its paired result. Rows are PRE-FILTERED by tool name host-side
- *   (rather than shipping the whole tool window the way 'changes.ops' does),
- *   which is what keeps a long session's EARLIEST plans on the wire.
+ * - 'plans.events' — one session's plans, ALREADY FOLDED: the fold that turns
+ *   the log into revisions lives in `./plan-events.ts` and runs here, once.
+ *   The page therefore holds no event log, no cursor and no second copy of
+ *   the acceptance rule.
  * - the push feed — one `{ sessionId, seq }` notice per accepted submission,
- *   to whichever sidebar views are attached for that session, plus a small
- *   mirror of the rows it saw. No queue and no replay on attach: a dropped
- *   notice costs nothing (the plan is in the log for good, one click away),
- *   while replaying one would pop the column open on a mere page reload.
+ *   to whichever sidebar views are attached for that session. No queue and no
+ *   replay on attach: a dropped notice costs nothing (the plan is in the log
+ *   for good, one click away), while replaying one would pop the column open
+ *   on a mere page reload.
  */
 import type { Context, SidebarSessionEvent } from './context-types.ts'
 import { sessionEventWindow } from './session-store.ts'
 import {
-  abortedPlanCallIdsOf,
   acceptedExitCallIdOf,
+  derivePlans,
   resultCallIdOf,
-  type PlanEventLike,
+  type PlanList,
 } from './plan-events.ts'
 
-/** Per-session cap of mirrored rows (a bounded, lossy ring). */
-const MIRROR_MAX_ROWS = 400
-
-/** How many sessions the mirror keeps at once. */
-const MIRROR_MAX_SESSIONS = 64
-
 /**
- * The plan rows of one session, oldest first: every accepted exit-tool call
- * plus its paired result. The accepted call ids are collected over the WHOLE
- * log before the cursor narrows anything, and calls aborted before dispatch
- * are ruled out of the CALL rows here. Their abort results still ship: a pull
- * whose cursor already crossed the call row folded it as pending, and only
- * the result teaches it the submission died (a from-scratch pull folds
- * neither row — the client's aborted exclusion skips the pair whole).
+ * The session's plan rows, oldest first, capped to the tail window the fold
+ * will read: every accepted exit-tool call plus the results that pair with
+ * one. Calls aborted before dispatch ship too — telling them apart from a
+ * real submission is the FOLD's job (over the whole window, where the abort
+ * collection runs), and this filter only decides which rows are plan rows.
  */
 function takePlanRows(
   log: readonly SidebarSessionEvent[],
-  afterSeq: number,
   limit: number,
 ): readonly SidebarSessionEvent[] {
-  const aborted = abortedPlanCallIdsOf(log)
-  // Accepted call ids cached per ROW: the filter and cap trim below re-ask
-  // rows the collection already judged, and every ask re-parses the body.
-  const accepted = new Map<SidebarSessionEvent, string>()
+  // Result pairing is a whole-window question: a capped scan would drop the
+  // result of a call that fell off the head of the window.
+  const paired = new Set<string>()
   for (const event of log) {
     const callId = acceptedExitCallIdOf(event)
-    if (callId !== undefined && !aborted.has(callId)) accepted.set(event, callId)
+    if (callId !== undefined) paired.add(callId)
   }
-  // Results pair against accepted ∪ aborted. An aborted call row is still
-  // excluded (the `accepted.get` probe misses it and `resultCallIdOf` reads
-  // only tool/result rows), but excluding its result too would leave an
-  // incremental pull — one that already holds the call row as a pending
-  // entry — with no row that ever settles it.
-  const paired = new Set([...accepted.values(), ...aborted])
-  const filtered = log.filter((event) => {
-    const callId = accepted.get(event) ?? resultCallIdOf(event)
-    return callId !== undefined && paired.has(callId) && event.seq > afterSeq
+  const rows = log.filter((event) => {
+    const callId = acceptedExitCallIdOf(event) ?? resultCallIdOf(event)
+    return callId !== undefined && paired.has(callId)
   })
-  if (filtered.length <= limit) return filtered
-  const capped = filtered.slice(filtered.length - limit)
-  // Never ship a result whose call fell off the cap's front: the fold pairs by
-  // call id, so a headless result is dropped and takes its whole revision with
-  // it — which the page's "keep every revision" contract forbids. Dropping the
-  // orphan row instead keeps every SHIPPED pair whole.
+  const capped = rows.length > limit ? rows.slice(rows.length - limit) : rows
+  // Never start the window on an orphan result: the fold pairs by call id, so
+  // a headless result contributes nothing and would only eat the cap. The
+  // rows that follow it are whole revisions.
   let start = 0
-  while (start < capped.length && !accepted.has(capped[start]!)) start += 1
+  while (start < capped.length && resultCallIdOf(capped[start]!) !== undefined) start += 1
   return capped.slice(start)
 }
 
-/** The two plan routes of the sidebar API. */
+/** The one route of the plan API. */
 export interface SidebarPlansRoutes {
-  /**
-   * The plan rows of one session past `afterSeq` (0/absent = whole log),
-   * oldest first. An unavailable log is an empty window, never an error.
-   */
-  events(payload: unknown): Promise<{ events: readonly SidebarSessionEvent[]; lastSeq: number }>
-}
-
-/** Live-mirrored plan rows, one session at a time (see {@link createPlanPushes}). */
-export interface PlanRowMirror {
-  rows(sessionId: string): readonly SidebarSessionEvent[]
+  /** One session's plan revisions, oldest first. An unavailable log is an
+   *  empty list, never an error. */
+  events(payload: unknown): Promise<PlanList>
 }
 
 /**
  * Build the plans routes bound to the plugin context.
  * @param ctx - host plugin context.
- * @param mirror - live-mirrored plan rows (the store's log can lag — see the
- *   {@link sessionEventWindow} note on the rehydration boundary).
  * @param limit - response cap in rows; longer logs ship their most recent
  *   window (a plan is two rows, so this bounds thousands of revisions).
  */
-export function buildPlansApi(ctx: Context, mirror: PlanRowMirror, limit: number): SidebarPlansRoutes {
+export function buildPlansApi(ctx: Context, limit: number): SidebarPlansRoutes {
   return {
-    events: (payload) => sessionEventWindow(
-      ctx,
-      payload,
-      (log, afterSeq) => takePlanRows(log, afterSeq, limit),
-      (sessionId) => mirror.rows(sessionId),
-    ),
+    events: async (payload) => {
+      const { events } = await sessionEventWindow(ctx, payload, (log) => takePlanRows(log, limit))
+      return derivePlans(events)
+    },
   }
 }
 
@@ -123,11 +90,11 @@ export interface PlanNotice {
   readonly seq: number
 }
 
-/** The plan push feed: per-session subscribers plus the mirrored rows. */
-export interface PlanPushes extends PlanRowMirror {
+/** The plan push feed: per-session subscribers. */
+export interface PlanPushes {
   /** Attach one sidebar view; returns the detacher. */
   subscribe(sessionId: string, send: (notice: PlanNotice) => void): () => void
-  /** Drop every subscriber and mirrored row (plugin teardown). */
+  /** Drop every subscriber (plugin teardown). */
   dispose(): void
 }
 
@@ -138,58 +105,27 @@ export interface PlanPushes extends PlanRowMirror {
  * page should already be open on the new revision. Result-side flips
  * (pending → approved/unadopted) are deliberately NOT pushed: the page's own
  * poll settles them, so the feed needs no memory of which calls it has seen.
- *
- * The feed also MIRRORS the rows it saw, because the store session's log can
- * freeze at its rehydration boundary after a host restart — the same hazard
- * `jobs-routes` mirrors job_output for. The mirror is a bounded ring: the
- * store remains the durable source, this only patches the window it can miss.
  */
 export function createPlanPushes(ctx: Context): PlanPushes {
   const subscribers = new Map<string, Set<(notice: PlanNotice) => void>>()
-  const mirrored = new Map<string, SidebarSessionEvent[]>()
-
-  const mirror = (sessionId: string, event: PlanEventLike): void => {
-    // Map iteration order is insertion order: a NEW session evicts the oldest
-    // one, so a long-lived host's mirror cannot grow without bound.
-    if (!mirrored.has(sessionId) && mirrored.size >= MIRROR_MAX_SESSIONS) {
-      const oldest = mirrored.keys().next().value
-      if (oldest !== undefined) mirrored.delete(oldest)
-    }
-    let rows = mirrored.get(sessionId)
-    if (rows === undefined) mirrored.set(sessionId, rows = [])
-    rows.push({ type: event.type, seq: event.seq, time: event.time, data: event.data as Record<string, unknown> })
-    if (rows.length > MIRROR_MAX_ROWS) rows.splice(0, rows.length - MIRROR_MAX_ROWS)
-  }
 
   // Detaching on dispose (not only on fiber teardown) keeps a manual
-  // `dispose()` from leaving a listener that keeps mirroring rows.
+  // `dispose()` from leaving a listener behind.
   let detach: (() => void) | undefined
   if (typeof ctx.on === 'function') {
     detach = ctx.on('session/event', (session, event) => {
       const sessionId = (session as { id?: unknown } | null)?.id
       if (typeof sessionId !== 'string') return
-      if (acceptedExitCallIdOf(event) !== undefined) {
-        mirror(sessionId, event)
-        const views = subscribers.get(sessionId)
-        if (views !== undefined) {
-          const notice: PlanNotice = { sessionId, seq: event.seq }
-          for (const send of views) send(notice)
-        }
-        return
-      }
-      // A result only joins the mirror when it pairs with a call still in the
-      // session's ring (a rolled-off call's result would ship headless).
-      const resultId = resultCallIdOf(event)
-      if (resultId === undefined) return
-      const rows = mirrored.get(sessionId)
-      if (rows === undefined || !rows.some((row) => acceptedExitCallIdOf(row) === resultId)) return
-      mirror(sessionId, event)
+      if (acceptedExitCallIdOf(event) === undefined) return
+      const views = subscribers.get(sessionId)
+      if (views === undefined) return
+      const notice: PlanNotice = { sessionId, seq: event.seq }
+      for (const send of views) send(notice)
     })
     ctx.effect(() => () => { detach?.() }, 'dsh-better-sidebar: plan push feed')
   }
 
   return {
-    rows: (sessionId) => mirrored.get(sessionId) ?? [],
     subscribe(sessionId, send) {
       let views = subscribers.get(sessionId)
       if (views === undefined) {
@@ -207,7 +143,6 @@ export function createPlanPushes(ctx: Context): PlanPushes {
       detach?.()
       detach = undefined
       subscribers.clear()
-      mirrored.clear()
     },
   }
 }

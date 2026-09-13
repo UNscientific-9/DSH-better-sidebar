@@ -317,7 +317,6 @@ function buildApi(
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
   assistantLive: AssistantLiveBuffer,
-  planPushes: PlanPushes,
 ): Record<string, ApiMethod> {
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
@@ -343,9 +342,8 @@ function buildApi(
   // `subagents.history` calls. The route degrades to a 503 when the host
   // subagent runtime is absent (the page has no topology to show anyway).
   const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
-  // Plan submissions for the plan page (shape, rationale and the mirror's
-  // role: plans-routes.ts).
-  const plansApi: SidebarPlansRoutes = buildPlansApi(ctx, planPushes, PLAN_EVENTS_WINDOW)
+  // Plan submissions for the plan page (shape and rationale: plans-routes.ts).
+  const plansApi: SidebarPlansRoutes = buildPlansApi(ctx, PLAN_EVENTS_WINDOW)
   return {
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
@@ -512,11 +510,10 @@ function buildApi(
     // the recent window. The live-then-persisted source is shared with every
     // other session-backed route (see session-store.ts's window helper).
     'changes.ops': (payload) => sessionEventWindow(ctx, payload, takeChangeRows),
-    // The session's plan revisions for the plan page: every accepted call of
-    // the host plan tool plus its paired result, pre-filtered host-side so the
-    // wire carries plan rows only. Its own window is merged with the rows the
-    // push feed mirrored, which is what covers a store log frozen at its
-    // rehydration boundary (see plans-routes.ts).
+    // The session's plan revisions for the plan page, FOLDED host-side: the
+    // plan rows (every accepted call of the host plan tool plus its paired
+    // result) are read over the window and turned into revisions, so the page
+    // renders a list instead of re-deriving one from events.
     'plans.events': (payload) => plansApi.events(payload),
     // Release a terminal immediately. The WebSocket close frame already does
     // this while the socket is open; this route covers the tab-close that
@@ -878,7 +875,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // effect releases the listener on fiber disposal.
   const assistantLive = createAssistantLiveBuffer(ctx)
   ctx.effect(() => () => { assistantLive.dispose() }, 'dsh-better-sidebar: live assistant stream buffer')
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, assistantLive, planPushes)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, assistantLive)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
