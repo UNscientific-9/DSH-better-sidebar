@@ -45,7 +45,10 @@ const MIRROR_MAX_SESSIONS = 64
  * The plan rows of one session, oldest first: every accepted exit-tool call
  * plus its paired result. The accepted call ids are collected over the WHOLE
  * log before the cursor narrows anything, and calls aborted before dispatch
- * are ruled out here, so the wire window and the page's fold agree exactly.
+ * are ruled out of the CALL rows here. Their abort results still ship: a pull
+ * whose cursor already crossed the call row folded it as pending, and only
+ * the result teaches it the submission died (a from-scratch pull folds
+ * neither row — the client's aborted exclusion skips the pair whole).
  */
 function takePlanRows(
   log: readonly SidebarSessionEvent[],
@@ -60,10 +63,15 @@ function takePlanRows(
     const callId = acceptedExitCallIdOf(event)
     if (callId !== undefined && !aborted.has(callId)) accepted.set(event, callId)
   }
-  const planCalls = new Set(accepted.values())
+  // Results pair against accepted ∪ aborted. An aborted call row is still
+  // excluded (the `accepted.get` probe misses it and `resultCallIdOf` reads
+  // only tool/result rows), but excluding its result too would leave an
+  // incremental pull — one that already holds the call row as a pending
+  // entry — with no row that ever settles it.
+  const paired = new Set([...accepted.values(), ...aborted])
   const filtered = log.filter((event) => {
     const callId = accepted.get(event) ?? resultCallIdOf(event)
-    return callId !== undefined && planCalls.has(callId) && event.seq > afterSeq
+    return callId !== undefined && paired.has(callId) && event.seq > afterSeq
   })
   if (filtered.length <= limit) return filtered
   const capped = filtered.slice(filtered.length - limit)

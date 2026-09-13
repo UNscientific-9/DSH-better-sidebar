@@ -55,10 +55,21 @@ export function PlanView({ scope, visible }: TabComponentProps) {
         return
       }
       if (events.length > 0) {
-        const merged = [...eventsRef.current, ...events]
-        eventsRef.current = merged.length > PLAN_EVENTS_WINDOW
-          ? merged.slice(merged.length - PLAN_EVENTS_WINDOW)
-          : merged
+        // The push handler's `void pull()` bypasses the poller's one-at-a-time
+        // channel, so it can race an in-flight tick: two responses at the same
+        // afterSeq carrying the same batch. Responses are seq-ascending, so
+        // only rows NEWER than everything already folded are appended — a
+        // racing duplicate contributes nothing instead of doubling its rows
+        // into the window cap (the call-id fold hides that until the window
+        // overflows and evicts older revisions).
+        const floor = eventsRef.current.at(-1)?.seq ?? -1
+        const fresh = events.filter(event => event.seq > floor)
+        if (fresh.length > 0) {
+          const merged = [...eventsRef.current, ...fresh]
+          eventsRef.current = merged.length > PLAN_EVENTS_WINDOW
+            ? merged.slice(merged.length - PLAN_EVENTS_WINDOW)
+            : merged
+        }
       }
       if (lastSeq > seqRef.current) seqRef.current = lastSeq
       const folded = extractPlans(eventsRef.current)

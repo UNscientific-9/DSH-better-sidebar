@@ -143,6 +143,19 @@ describe('extractPlans', () => {
     expect(plans.map(plan => plan.callId)).toEqual(['p2'])
   })
 
+  it('removes the entry the call row built once its abort result lands (not unadopted)', () => {
+    // The page's real sequence: the call row arrives first (its FIRST sighting
+    // folds as pending), the user stops the turn, and the abort result joins
+    // the accumulated window afterwards — the re-fold must DROP the entry, the
+    // way the pairing check would not (it settles a held entry, never clears).
+    const aborted: SidebarSessionEvent = ev('tool/result', 2, 2, {
+      error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
+      message: { source: { kind: 'tool', callId: 'p1' }, content: [{ type: 'tool-result', isError: true, content: [] }] },
+    })
+    expect(extractPlans([call(1, 'p1', { plan: '# 未送达的计划' })]).map(plan => plan.status)).toEqual(['pending'])
+    expect(extractPlans([call(1, 'p1', { plan: '# 未送达的计划' }), aborted])).toEqual([])
+  })
+
   it('trims the surrounding blank lines of a body but keeps its interior intact', () => {
     const plans = extractPlans([call(1, 'p1', { plan: '\n\n# 标题\n\n第一段\n\n第二段\n\n' })])
     expect(plans[0]!.body).toBe('# 标题\n\n第一段\n\n第二段')

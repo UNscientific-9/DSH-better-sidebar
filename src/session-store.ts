@@ -114,10 +114,32 @@ export async function sessionEventWindow(
   const extra = extraRows?.(sessionId) ?? []
   let log: readonly SidebarSessionEvent[] = base
   if (extra.length > 0) {
-    const rows = new Map<number, SidebarSessionEvent>()
-    for (const event of base) rows.set(event.seq, event)
-    for (const event of extra) rows.set(event.seq, event)
-    log = [...rows.values()].sort((left, right) => left.seq - right.seq)
+    // The merge rebuilds the whole log into a Map and sorts it — O(n log n)
+    // per call, paid by every attach poll of a session that ever mirrored a
+    // row, although the mirror overlaps the snapshot COMPLETELY whenever the
+    // store is current (it exists only for the store frozen at its
+    // rehydration boundary after a host restart). Both lists are
+    // seq-ascending (the append-only log; the mirror in feed order), so a
+    // two-pointer sweep detects that case and keeps `base` untouched; only a
+    // row the base genuinely lacks pays the merge. Same seq ⇒ same event (the
+    // mirror copies the feed's rows), so the fast path and the merge agree on
+    // every row either way — the sweep failing conservatively into the merge
+    // is always safe.
+    let overlapped = true
+    let cursor = 0
+    for (const row of extra) {
+      while (cursor < base.length && base[cursor]!.seq < row.seq) cursor += 1
+      if (cursor >= base.length || base[cursor]!.seq !== row.seq) {
+        overlapped = false
+        break
+      }
+    }
+    if (!overlapped) {
+      const rows = new Map<number, SidebarSessionEvent>()
+      for (const event of base) rows.set(event.seq, event)
+      for (const event of extra) rows.set(event.seq, event)
+      log = [...rows.values()].sort((left, right) => left.seq - right.seq)
+    }
   }
   const shipped = take(log, afterSeq)
   // An empty window answers with a cursor the caller can reuse: `afterSeq` is

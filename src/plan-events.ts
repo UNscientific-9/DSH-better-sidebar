@@ -74,15 +74,23 @@ function abortCodeOf(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined
 }
 
-/** The call ids a paired result marks as aborted before dispatch. Must run
- *  over the WHOLE log: the abort lands on the result, after the call row. */
+/** The call ids a paired result marks as aborted before dispatch — exit-tool
+ *  calls only: the host's agent loop stamps a call+abort-result pair for
+ *  EVERY tool a stop skips before dispatch, and only the exit-tool pair has
+ *  plan faces to keep consistent. Must run over the WHOLE log: the abort
+ *  lands on the result, after the call row — which is what the gate reads. */
 export function abortedPlanCallIdsOf(events: readonly PlanEventLike[]): Set<string> {
+  const planCalls = new Set<string>()
+  for (const event of events) {
+    const callId = acceptedExitCallIdOf(event)
+    if (callId !== undefined) planCalls.add(callId)
+  }
   const aborted = new Set<string>()
   for (const event of events) {
     if (event.type !== 'tool/result') continue
     if (abortCodeOf((event.data as { error?: unknown } | null)?.error) !== ABORTED_BEFORE_DISPATCH) continue
     const callId = resultCallIdOf(event)
-    if (callId !== undefined) aborted.add(callId)
+    if (callId !== undefined && planCalls.has(callId)) aborted.add(callId)
   }
   return aborted
 }

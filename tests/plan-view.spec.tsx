@@ -205,4 +205,49 @@ describe('PlanView', () => {
       act(() => { root.unmount() })
     }
   })
+
+  it('a push-triggered pull racing the poll cannot double rows into the window', async () => {
+    // The push handler fires `void pull()` OUTSIDE the poller's one-at-a-time
+    // channel, so it races the in-flight tick: two responses at the SAME
+    // afterSeq. Here the STALE response settles last — the ordering that used
+    // to re-append its batch over the capped window and evict the newer
+    // revision (the call-id fold hides the duplicate rows until then).
+    const filler = (seq: number): SidebarSessionEvent => ({
+      type: 'tool/call', seq, time: seq, data: { name: 'bash', callId: `b${seq}`, arguments: '{}' },
+    })
+    const first = [
+      ...Array.from({ length: 1_998 }, (_, index) => filler(index + 1)),
+      planCall(1_999, 'p1', '# 第一版'),
+      planResult(2_000, 'p1', false),
+    ]
+    const second = [...first, planCall(2_001, 'p2', '# 第二版'), planResult(2_002, 'p2', true)]
+    const waiters: Array<() => void> = []
+    let call = 0
+    vi.spyOn(api, 'plansEvents').mockImplementation(async (_scope, afterSeq) => {
+      const batch = call++ === 0 ? first : second
+      await new Promise<void>((resolve) => { waiters.push(resolve) })
+      const cursor = afterSeq ?? -1
+      const shipped = batch.filter(event => event.seq > cursor)
+      return { events: shipped, lastSeq: shipped.at(-1)?.seq ?? cursor }
+    })
+    const { container, root } = mount()
+    try {
+      // The immediate poll hangs at afterSeq 0; the push fires a SECOND pull
+      // before any response has advanced the cursor.
+      act(() => { window.dispatchEvent(new Event(PLAN_CHANGED_EVENT)) })
+      expect(waiters.length).toBe(2)
+      // The NEWER response settles first and fills the window past its cap.
+      await act(async () => { waiters[1]!(); await Promise.resolve() })
+      await flush()
+      expect(options(container)).toEqual(['v1 · 第一版', 'v2 · 第二版'])
+      // The STALE response lands last: every row it carries is already
+      // folded, so it must contribute nothing — revision 2 stays on the page
+      // instead of being squeezed off the capped window by duplicate rows.
+      await act(async () => { waiters[0]!(); await Promise.resolve() })
+      await flush()
+      expect(options(container)).toEqual(['v1 · 第一版', 'v2 · 第二版'])
+    } finally {
+      act(() => { root.unmount() })
+    }
+  })
 })

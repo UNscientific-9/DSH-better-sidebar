@@ -109,19 +109,60 @@ describe('plans.events route', () => {
     expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([3])
   })
 
-  it('drops a call whose result marks it aborted before dispatch, together with its result', async () => {
+  it('drops an aborted-before-dispatch call row but still ships its abort result', async () => {
     // The harness mounts the error's `info` — not the error itself — on the
     // result, so the code rides `data.error.code` and reads
     // 'ABORTED_BEFORE_DISPATCH' (the dsh-tools constant's VALUE, not its name).
-    // The call row carries a perfectly good body, but the user never saw a
-    // review card, so neither face may ship or fold it.
+    // The call row carries a perfectly good body the user never saw a review
+    // card for, so it stays unshipped — a from-scratch pull folds neither row,
+    // because the client's aborted exclusion skips the pair whole. The result
+    // row itself must ship: a pull that already holds the call row folded it
+    // as pending, and without the result its entry would stay pending forever.
     const abortedResult = planResult(4, 'p1', 'aborted', {
       isError: true,
       error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
     })
     const events = [planCall(3, 'p1'), abortedResult, planCall(5, 'p2'), planResult(6, 'p2', 'approved')]
     const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLAN_EVENTS_WINDOW)
-    expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([5, 6])
+    expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([4, 5, 6])
+  })
+
+  it('drops the abort result of a non-plan tool the stop also skipped', async () => {
+    // The host's agent loop stamps a call + ABORTED_BEFORE_DISPATCH result
+    // pair for EVERY tool a stop skips before dispatch, not just the exit
+    // tool. The abort set must gate on the paired call row being a plan call,
+    // or every stopped bash command leaks onto the plans wire (and into the
+    // client's event window) as a row no plan face can use.
+    const events: SidebarSessionEvent[] = [
+      { type: 'tool/call', seq: 1, time: 1, data: { name: 'bash', callId: 'b1', arguments: '{"command":"ls"}' } },
+      planResult(2, 'b1', 'aborted', {
+        isError: true,
+        error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
+      }),
+      planCall(3, 'p1'),
+      planResult(4, 'p1', 'approved'),
+    ]
+    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLAN_EVENTS_WINDOW)
+    expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([3, 4])
+    // An incremental pull whose cursor already crossed the bash call row is
+    // held to the same rule: the abort result is not a plan row either way.
+    expect((await api.events({ sessionId: 's1', afterSeq: 1 })).events.map(event => event.seq)).toEqual([3, 4])
+  })
+
+  it('ships the abort result of a call the cursor has already passed', async () => {
+    // The ghost-pending sequence: the call row ships and the page folds it as
+    // pending, then the user stops the turn and the abort result lands in the
+    // log. The call row is past the cursor and never re-ships, so the next
+    // incremental pull must deliver the result — the only row that settles
+    // the entry.
+    const log = [planCall(3, 'p1')]
+    const api = buildPlansApi(ctxWith({ get: () => session(log) }), noMirror, PLAN_EVENTS_WINDOW)
+    expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([3])
+    log.push(planResult(4, 'p1', 'aborted', {
+      isError: true,
+      error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
+    }))
+    expect((await api.events({ sessionId: 's1', afterSeq: 3 })).events.map(event => event.seq)).toEqual([4])
   })
 
   it('drops a submission the host itself would refuse', async () => {
