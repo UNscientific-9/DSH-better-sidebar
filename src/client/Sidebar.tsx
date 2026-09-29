@@ -50,7 +50,7 @@ import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
-import { api } from './api.ts'
+import { useSessionRoot } from './use-session-root.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -217,8 +217,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const state = snapshot.state
   const sessionId = snapshot.sessionId
-  const summaryCwd = sessionId === undefined ? undefined : sessionList.byId[sessionId]?.cwd
-
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
   //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
   //             geometry contributes (the real caption-overlay height,
@@ -275,41 +273,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     return () => { for (const tag of tags) tag.remove() }
   }, [presetCss, customCss, preset?.id])
 
-  // The list summary carries the session header cwd captured at session
-  // start; the HOST is the authority on where the session is actually working
-  // (a session can move into a linked git worktree, even one of another
-  // repository). Always ask the host, prefer its answer, and re-ask when the
-  // window regains focus, when a file refresh is requested, and on a slow
-  // timer so the explorer follows the agent mid-session.
-  const [fetchedCwd, setFetchedCwd] = useState<{ sessionId: string; cwd: string } | undefined>(undefined)
-  useEffect(() => {
-    if (sessionId === undefined) return
-    let cancelled = false
-    const load = (): void => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      api.sessionCwd({ sessionId })
-        .then(result => {
-          if (cancelled) return
-          setFetchedCwd(previous => (
-            previous !== undefined && previous.sessionId === sessionId && previous.cwd === result.cwd
-              ? previous
-              : { sessionId, cwd: result.cwd }
-          ))
-        })
-        .catch(() => { /* the explorer/git rows surface their own errors */ })
-    }
-    load()
-    window.addEventListener('focus', load)
-    window.addEventListener('dsh-sidebar:refresh-files', load)
-    const timer = window.setInterval(load, 5_000)
-    return () => {
-      cancelled = true
-      window.removeEventListener('focus', load)
-      window.removeEventListener('dsh-sidebar:refresh-files', load)
-      window.clearInterval(timer)
-    }
-  }, [sessionId, summaryCwd])
-  const cwd = fetchedCwd !== undefined && fetchedCwd.sessionId === sessionId ? fetchedCwd.cwd : summaryCwd
+  // The live root shared by both client surfaces: the host follows the
+  // session's active linked git worktree, the list summary only seeds first paint.
+  const cwd = useSessionRoot(ctx, sessionId)
 
   // The + menu options ride a memo so the workbench does not rebuild the
   // array identity across renders that did not change the store (drag state,
