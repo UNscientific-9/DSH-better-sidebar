@@ -275,21 +275,41 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     return () => { for (const tag of tags) tag.remove() }
   }, [presetCss, customCss, preset?.id])
 
-  // While the session's header is still hydrating (or the session is blank),
-  // the list summary may carry no cwd; ask the host once (it falls back to
-  // the process cwd) so the explorer root and the git rows are real from
-  // first paint instead of showing "no session".
-  const [fetchedCwd, setFetchedCwd] = useState<string | undefined>(undefined)
+  // The list summary carries the session header cwd captured at session
+  // start; the HOST is the authority on where the session is actually working
+  // (a session can move into a linked git worktree, even one of another
+  // repository). Always ask the host, prefer its answer, and re-ask when the
+  // window regains focus, when a file refresh is requested, and on a slow
+  // timer so the explorer follows the agent mid-session.
+  const [fetchedCwd, setFetchedCwd] = useState<{ sessionId: string; cwd: string } | undefined>(undefined)
   useEffect(() => {
-    setFetchedCwd(undefined)
-    if (sessionId === undefined || summaryCwd !== undefined) return
+    if (sessionId === undefined) return
     let cancelled = false
-    api.sessionCwd({ sessionId })
-      .then(result => { if (!cancelled) setFetchedCwd(result.cwd) })
-      .catch(() => { /* the explorer/git rows surface their own errors */ })
-    return () => { cancelled = true }
+    const load = (): void => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      api.sessionCwd({ sessionId })
+        .then(result => {
+          if (cancelled) return
+          setFetchedCwd(previous => (
+            previous !== undefined && previous.sessionId === sessionId && previous.cwd === result.cwd
+              ? previous
+              : { sessionId, cwd: result.cwd }
+          ))
+        })
+        .catch(() => { /* the explorer/git rows surface their own errors */ })
+    }
+    load()
+    window.addEventListener('focus', load)
+    window.addEventListener('dsh-sidebar:refresh-files', load)
+    const timer = window.setInterval(load, 5_000)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', load)
+      window.removeEventListener('dsh-sidebar:refresh-files', load)
+      window.clearInterval(timer)
+    }
   }, [sessionId, summaryCwd])
-  const cwd = summaryCwd ?? fetchedCwd
+  const cwd = fetchedCwd !== undefined && fetchedCwd.sessionId === sessionId ? fetchedCwd.cwd : summaryCwd
 
   // The + menu options ride a memo so the workbench does not rebuild the
   // array identity across renders that did not change the store (drag state,
