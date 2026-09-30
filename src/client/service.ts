@@ -667,6 +667,8 @@ export const SIDEBAR_SERVICE_VERSION = '0.24.1'
  *   external file-tree icons overriding the built-in glyphs, matched by
  *   extension (`exts`), exact file name (`names`), or directory name
  *   (`folderNames`).
+ * - 'rightActions' (v0.25.0): TabDescriptor.rightActions — the active tab's
+ *   right-aligned action area rendered at the tab strip's right end.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -684,6 +686,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'fileIcons',
+  'rightActions',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
