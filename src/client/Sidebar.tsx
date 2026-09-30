@@ -619,9 +619,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   /**
    * The active tab's right-aligned action area from the tab-type registry:
    * a descriptor that declares `rightActions` supplies its own toolbar
-   * (e.g. a terminal tab's new / split / restart buttons) rendered at the
-   * tab strip's right end. A throwing resolver is swallowed (no actions) —
-   * the tab strip must never break because a plugin's resolver failed.
+   * rendered at the tab strip's right end. A throwing resolver is swallowed
+   * (no actions) — the tab strip must never break because a plugin's
+   * resolver failed.
    */
   const tabRightActionsOf = (tab: SidebarTab): ReactNode => {
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)

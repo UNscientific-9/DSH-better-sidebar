@@ -250,9 +250,8 @@ interface TabDescriptor {
   /**
    * tab 栏右侧操作区（v0.25.0+）：tab 激活时，返回的 ReactNode 渲染在 tab 栏
    * 右端（+ 按钮右侧、面板关闭按钮左侧，右对齐）。让 tab 把自己的工具栏
-   * （如终端 tab 的新建 / 拆分 / 重启）直接放进 tab 栏，而不是在内容区顶部
-   * 再单独渲染一行头部。返回 null/undefined 不渲染；抛错被吞掉（不渲染操作）。
-   * 每次活跃 tab 渲染都会调用——保持廉价。
+   * 直接放进 tab 栏，而不是在内容区顶部再单独渲染一行头部。返回 null/undefined
+   * 不渲染；抛错被吞掉（不渲染操作）。每次活跃 tab 渲染都会调用——保持廉价。
    */
   rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState) => ReactNode
   /**
