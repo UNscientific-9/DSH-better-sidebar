@@ -660,6 +660,21 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
+/* The active tab's right-aligned action area: sits at the tab strip's right
+   end (after the + button, before the panel's close control). Flexes to fill
+   the remaining width so its content can right-align; content is opaque to
+   the tab strip's own layout (the strip reserves the close control's width
+   via .bottomPanel .tabBar's padding-right, so this area never underlaps it). */
+.tabBarRightActions {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-right: 4px;
+}
+
 /* ── Explorer ──────────────────────────────────────────────────────────── */
 
 .explorer {

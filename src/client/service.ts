@@ -236,6 +236,15 @@ export interface TabDescriptor {
    */
   badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
   /**
+   * Right-aligned action area for the tab strip (v0.25.0+). When the tab is
+   * active, the returned ReactNode renders at the tab strip's right end
+   * (between the + button and the panel's close control). Lets a descriptor
+   * (e.g. a terminal tab) put its toolbar (new / split / restart) directly
+   * in the strip instead of a separate header row below it. Returning
+   * null/undefined renders nothing; a throw is swallowed (no actions shown).
+   */
+  rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState) => ReactNode
+  /**
    * Lifecycle callbacks (v0.12.0+). Fired by the SERVICE paths only:
    * `onOpen` when an open actually creates a tab (a dedupe/id-safety-net
    * focus is NOT an open — it fires `onActivate` instead), `onActivate`

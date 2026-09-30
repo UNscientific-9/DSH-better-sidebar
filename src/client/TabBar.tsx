@@ -68,9 +68,17 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /**
+   * Right-aligned action area resolver for the active tab: returns a
+   * ReactNode rendered at the tab strip's right end (between the + button
+   * and the panel's close control), or null/undefined for none. Lets a
+   * descriptor (e.g. a terminal tab) inject its own toolbar (new / split /
+   * restart) directly into the strip instead of a separate header row.
+   */
+  getTabRightActions?: (tab: SidebarTab) => ReactNode
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, getTabRightActions,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
@@ -302,6 +310,20 @@ export function TabBar(props: {
           anchor={<span />}
         />
       </div>
+      {/*
+        The active tab's right-aligned action area: rendered at the tab
+        strip's right end (after the + menu, before the panel's close
+        control). A descriptor that declares `rightActions` supplies its own
+        toolbar here (e.g. a terminal tab's new / split / restart buttons),
+        so the page's controls live in the strip instead of a separate header
+        row below it. null/undefined renders nothing.
+      */}
+      {(() => {
+        if (getTabRightActions === undefined) return null
+        const activeTab = tabs.find(tab => tab.id === active)
+        if (activeTab === undefined) return null
+        return <div className={css.tabBarRightActions}>{getTabRightActions(activeTab)}</div>
+      })()}
     </div>
   )
 }
