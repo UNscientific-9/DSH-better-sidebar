@@ -237,13 +237,21 @@ export interface TabDescriptor {
   badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
   /**
    * Right-aligned action area for the tab strip (v0.25.0+). When the tab is
-   * active, the returned ReactNode renders at the tab strip's right end
-   * (between the + button and the panel's close control). Lets a descriptor
-   * put its toolbar directly in the strip instead of a separate header row
-   * below it. Returning null/undefined renders nothing; a throw is swallowed
-   * (no actions shown).
+   * active, the returned ReactNode renders at the right end of its pane's
+   * tab strip (between the + button and the panel's close control). Lets a
+   * descriptor put its toolbar directly in the strip instead of a separate
+   * header row below it. Returning null/undefined renders nothing at all
+   * (not even an empty wrapper); a throw is swallowed (no actions shown).
+   * Called on every tab-strip render, so keep it cheap.
+   *
+   * `tab` is the open instance this strip is rendering for: with
+   * `single: false` and split panes, several instances of one type can be
+   * open at once and every pane renders its own strip, so toolbar actions
+   * (restart / close / …) must target `tab`, never "the" tab of this type.
+   * `paneId` is that strip's pane (compare with `state.activePane` to tell
+   * whether the pane is the focused one).
    */
-  rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState) => ReactNode
+  rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState, tab: SidebarTab, paneId: string) => ReactNode
   /**
    * Lifecycle callbacks (v0.12.0+). Fired by the SERVICE paths only:
    * `onOpen` when an open actually creates a tab (a dedupe/id-safety-net

@@ -147,7 +147,7 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
-  getTabRightActions?: (tab: SidebarTab) => ReactNode
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
 }) {
   const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
@@ -245,7 +245,7 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
-  getTabRightActions?: (tab: SidebarTab) => ReactNode
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
 }) {
   const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions } = props
   if (node.kind === 'leaf') {
@@ -286,6 +286,7 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
+              getTabRightActions={getTabRightActions}
             />
           </div>
         </Fragment>
@@ -307,7 +308,7 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
-  getTabRightActions?: (tab: SidebarTab) => ReactNode
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
 }) {
   const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions } = props
   return (

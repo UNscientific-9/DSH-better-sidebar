@@ -619,15 +619,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   /**
    * The active tab's right-aligned action area from the tab-type registry:
    * a descriptor that declares `rightActions` supplies its own toolbar
-   * rendered at the tab strip's right end. A throwing resolver is swallowed
-   * (no actions) — the tab strip must never break because a plugin's
-   * resolver failed.
+   * rendered at its pane's tab-strip right end. The open `tab` and its
+   * `paneId` ride along so the resolver can target the right instance (a
+   * split workbench renders one strip per pane, each with its own active
+   * tab). A throwing resolver is swallowed (no actions) — the tab strip
+   * must never break because a plugin's resolver failed.
    */
-  const tabRightActionsOf = (tab: SidebarTab): ReactNode => {
+  const tabRightActionsOf = (tab: SidebarTab, paneId: string): ReactNode => {
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor?.rightActions === undefined) return null
     try {
-      return descriptor.rightActions(ctx, { sessionId, cwd }, state)
+      return descriptor.rightActions(ctx, { sessionId, cwd }, state, tab, paneId)
     } catch (error) {
       console.error('[dsh-better-sidebar] tab rightActions error:', error)
       return null

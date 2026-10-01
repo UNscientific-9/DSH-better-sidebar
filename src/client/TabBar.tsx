@@ -74,8 +74,11 @@ export function TabBar(props: {
    * and the panel's close control), or null/undefined for none. Lets a
    * descriptor (e.g. a terminal tab) inject its own toolbar (new / split /
    * restart) directly into the strip instead of a separate header row.
+   * Receives the strip's `paneId` alongside the active tab so the resolver
+   * can tell WHICH instance's strip it is decorating (split panes each
+   * render their own).
    */
-  getTabRightActions?: (tab: SidebarTab) => ReactNode
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, getTabRightActions,
@@ -89,6 +92,16 @@ export function TabBar(props: {
   // The context target's index in the render-time tab snapshot; -1 when the
   // tab disappeared since the menu opened (the menu hides then).
   const tabMenuIndex = tabMenu === null ? -1 : tabs.findIndex(tab => tab.id === tabMenu.tabId)
+
+  // The active tab's right-actions node, resolved up front so the render
+  // below can skip the wrapper entirely when there is nothing to show (an
+  // empty wrapper is a flex item and would still affect the strip layout).
+  // `false` is treated like null: React renders it as nothing anyway.
+  const activeRightTab = tabs.find(tab => tab.id === active)
+  const rightActions = getTabRightActions !== undefined && activeRightTab !== undefined
+    ? getTabRightActions(activeRightTab, paneId)
+    : null
+  const hasRightActions = rightActions !== null && rightActions !== undefined && rightActions !== false
 
   // Middle-click close: the press target is recorded on middle mousedown
   // (preventDefaulted to disarm Chrome's middle-click autoscroll — its
@@ -316,14 +329,12 @@ export function TabBar(props: {
         control). A descriptor that declares `rightActions` supplies its own
         toolbar here (e.g. a terminal tab's new / split / restart buttons),
         so the page's controls live in the strip instead of a separate header
-        row below it. null/undefined renders nothing.
+        row below it. The node is resolved BEFORE the wrapper is created: a
+        resolver returning null/undefined (or false) must leave the strip
+        exactly as it was — an empty flex item would still take part in the
+        strip's layout and change every existing tab bar.
       */}
-      {(() => {
-        if (getTabRightActions === undefined) return null
-        const activeTab = tabs.find(tab => tab.id === active)
-        if (activeTab === undefined) return null
-        return <div className={css.tabBarRightActions}>{getTabRightActions(activeTab)}</div>
-      })()}
+      {hasRightActions ? <div className={css.tabBarRightActions}>{rightActions}</div> : null}
     </div>
   )
 }
