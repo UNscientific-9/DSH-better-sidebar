@@ -146,6 +146,15 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
+  // The exclude-pattern list (VS Code files.exclude style): the HOST filters
+  // the listing with it, so a changed list reloads the tree (FileTree wipes
+  // its level cache when the list's VALUE changes). The snapshot array
+  // identity is stable until prefs are rewritten, so useSyncExternalStore
+  // stays quiet.
+  const exclude = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs.explorerExclude, [store]),
+  )
   // The DSH-native "open with" capability (host open-in-app): one adapter per
   // window, shared by every row menu below. The plugin no longer owns a
   // target list, a URL vocabulary or a spawn route — the host reports which
@@ -467,6 +476,7 @@ export function EditorHost(props: {
           onReferenceFile={onReferenceFile}
           onPathRenamed={onPathRenamed}
           onPathDeleted={onPathDeleted}
+          exclude={exclude}
           service={ctx.get('betterSidebar')}
         />
       </div>
@@ -594,6 +604,7 @@ export function EditorHost(props: {
               onReferenceFile={onReferenceFile}
               onPathRenamed={onPathRenamed}
               onPathDeleted={onPathDeleted}
+              exclude={exclude}
               service={ctx.get('betterSidebar')}
             />
           </div>

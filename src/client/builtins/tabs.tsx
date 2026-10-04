@@ -43,7 +43,8 @@ export function builtinTabs(): readonly TabDescriptor[] {
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
       // vs per-path windows) renders as an iconed select row under the
-      // editor card's gear in the Side card settings page; the "open with"
+      // editor card's gear in the Side card settings page; the exclude-pattern
+      // rows (VS Code files.exclude style) sit below it, and the "open with"
       // configuration (SSH host + custom editors) is the custom panel BELOW
       // those rows — the settings seam renders rows first, custom panel after.
       // The workspace-fence switch is GONE: there is no containment to toggle.
@@ -67,6 +68,12 @@ export function builtinTabs(): readonly TabDescriptor[] {
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
+        }, {
+          key: 'explorerExclude',
+          type: 'patterns',
+          title: () => t('explorerExclude'),
+          desc: () => t('explorerExcludeDesc'),
+          patternsPlaceholder: t('explorerExcludePlaceholder'),
         }],
         // Plugin-owned rows (values live in `pluginSettings['editor']`): the
         // plugin's own open-with targets are shown only when the host reports

@@ -34,6 +34,7 @@ import { resolveSessionPath } from './session-path.ts'
 import { mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
+import { compileExcludePatterns } from './exclude-patterns.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { isTrustedApiRequest } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
@@ -338,9 +339,12 @@ function buildApi(
     },
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const record = payload as { path?: unknown }
+      const record = payload as { path?: unknown; exclude?: unknown }
       const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
-      return listDirectory(target, resolved.listLimit)
+      // The client's explorerExclude pref rides the request (compiled here so
+      // the listing and the singleton fold probe share one matcher).
+      const exclude = compileExcludePatterns(record.exclude, cwd)
+      return listDirectory(target, resolved.listLimit, exclude)
     },
     // Batch listing: one request for every level the tree has expanded, so a
     // mount/refresh costs one round trip instead of N. Each path rides the
@@ -349,7 +353,7 @@ function buildApi(
     // in place — the other levels still render.
     'fs.trees': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const record = payload as { paths?: unknown } | null
+      const record = payload as { paths?: unknown; exclude?: unknown } | null
       const paths = Array.isArray(record?.paths)
         ? record.paths.filter((value): value is string => typeof value === 'string' && value !== '')
         : []
@@ -357,6 +361,10 @@ function buildApi(
       if (paths.length > FS_TREES_MAX_PATHS) {
         throw new SidebarError('bad-request', `too many paths (max ${FS_TREES_MAX_PATHS})`)
       }
+      // The file tree's REAL entry (a mount/expand costs one POST): the
+      // explorerExclude pref has to be compiled here too, or the exclude list
+      // would simply not reach the only surface the explorer reads.
+      const exclude = compileExcludePatterns(record?.exclude, cwd)
       const levels = await Promise.all(paths.map(async (raw): Promise<SidebarFsLevel> => {
         // A session-relative path is accepted here (the tree already carries
         // cwd-relative paths); `fs.tree` itself keeps requiring absolute
@@ -366,7 +374,7 @@ function buildApi(
         const homeRelative = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
         const requested = isAbsolute(raw) || homeRelative ? raw : `${cwd}${sep}${raw}`
         try {
-          return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit)
+          return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit, exclude)
         } catch (error) {
           // Per-level failure: the batch itself stays a success (one unreadable
           // directory must not blank the whole tree).
@@ -380,8 +388,9 @@ function buildApi(
       // cwd (not caller-targetable — the walk is unbounded by design and
       // must never escape the workspace), budgeted inside searchFiles.
       const { cwd } = await cwdOf(payload)
+      const record = payload as { exclude?: unknown }
       const query = requireString(payload, 'query')
-      return searchFiles(cwd, query)
+      return searchFiles(cwd, query, { exclude: compileExcludePatterns(record.exclude, cwd) })
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)

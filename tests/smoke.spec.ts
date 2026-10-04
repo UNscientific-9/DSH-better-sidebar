@@ -1009,6 +1009,43 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  it('fs.trees and fs.search apply the request exclude patterns', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-exclude-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'src'), { recursive: true })
+    mkdirSync(join(workspace, 'third_party', 'pkg'), { recursive: true })
+    writeFileSync(join(workspace, '.DS_Store'), 'junk')
+    writeFileSync(join(workspace, 'src', 'index.ts'), 'code')
+    writeFileSync(join(workspace, 'third_party', 'index.ts'), 'dep')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      // `fs.trees` is the file tree's REAL entry (one POST per mount/expand):
+      // the exclude list has to reach this route or the pref does nothing.
+      const batch = await invoke(route, 'fs.trees', {
+        sessionId: 's-tree',
+        paths: [workspace],
+        exclude: ['.DS_Store', 'third_party'],
+      })
+      expect(batch.ok).toBe(true)
+      const levels = (batch.value as unknown as { levels: Array<{ entries: Array<{ name: string }> }> }).levels
+      expect(levels[0]!.entries.map(entry => entry.name)).toEqual(['src'])
+      // The search shares the one compiled matcher: excluded names never match
+      // and are never descended (a directory hit disappears with them).
+      const search = await invoke(route, 'fs.search', {
+        sessionId: 's-tree',
+        query: 'index',
+        exclude: ['third_party'],
+      })
+      expect((search.value as unknown as { matches: string[] }).matches).toEqual(['src/index.ts'])
+      // No exclude on the request → the unfiltered fast path, unchanged.
+      const plain = await invoke(route, 'fs.trees', { sessionId: 's-tree', paths: [workspace] })
+      const plainLevels = (plain.value as unknown as { levels: Array<{ entries: Array<{ name: string }> }> }).levels
+      expect(plainLevels[0]!.entries.map(entry => entry.name)).toEqual(['src', 'third_party', '.DS_Store'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('fs.trees rejects an empty list and an oversized batch', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-trees-guard-'))
     const workspace = join(root, 'workspace')

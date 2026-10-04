@@ -6,7 +6,9 @@
  * directories sort first, hidden entries render dimmed. The expansion set
  * lives in the per-session state (owned by the caller); the caller also owns
  * the refresh affordance — a `refreshTick` bump wipes the level cache so the
- * visible set reloads.
+ * visible set reloads. Chains of dirs holding exactly one real dir child each
+ * fold into one breadcrumb row (`a/b/c`, VSCode "compact folders"); clicking
+ * the row toggles the whole chain.
  *
  * Selection (VS Code semantics, no modifier = the old click semantics
  * untouched): Ctrl/Cmd+click toggles a row and sets the anchor, Shift+click
@@ -50,6 +52,7 @@ import {
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry, type FsLevel } from './api.ts'
+import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
 import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
@@ -181,7 +184,13 @@ interface ActivateModifiers {
  * one reads the live props/state through the refs the tree maintains.
  */
 interface RowActions {
-  activate(event: ActivateModifiers, path: string, isDir: boolean): void
+  /**
+   * Activate one row. `path` is the row's IDENTITY (the fold chain's head, so
+   * selection stays keyed to the rendered row); `chain` — directories only —
+   * names the links a plain click toggles, so a folded `a/b/c` row opens and
+   * closes as one row instead of only ever toggling its head.
+   */
+  activate(event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void
   contextMenu(event: MouseEvent<HTMLDivElement>, path: string, isDir: boolean): void
   reference(path: string, isDir: boolean): void
   dragOver(event: DragEvent<HTMLDivElement>, dir: string): void
@@ -283,6 +292,13 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
 /** One directory row's props (same stability rules as {@link FileRowProps}). */
 interface DirRowProps {
   entry: FsEntry
+  /**
+   * The fold chain this row renders: `[entry]` for an ordinary directory, or
+   * the singleton-dir breadcrumb (`a` → `a/b` → `a/b/c`) VSCode calls
+   * "compact folders". The array identity is stable while the level cache
+   * stands (see the chain cache in the tree body), so memo() still bails out.
+   */
+  chain: readonly FsEntry[]
   depth: number
   expanded: boolean
   iconsVersion: number
@@ -297,9 +313,13 @@ interface DirRowProps {
 }
 
 const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
-  const { entry, depth, expanded, iconsVersion, service, selected, revealed, dropTarget, gitChanged, copied, actions } = props
+  const { entry, chain, depth, expanded, iconsVersion, service, selected, revealed, dropTarget, gitChanged, copied, actions } = props
   void iconsVersion
-  const icon = service !== undefined ? service.folderIcon(entry.path, expanded, 14) : builtinFolderIcon(expanded, 14)
+  // The row's ACTIONS target the chain's deepest link: that is the directory
+  // the user sees expanded (`a/b/c`), so dropping into it, renaming it or
+  // opening a menu on it must address `c`, not the fold head `a`.
+  const target = chain[chain.length - 1]!
+  const icon = service !== undefined ? service.folderIcon(target.path, expanded, 14) : builtinFolderIcon(expanded, 14)
   return (
     <div
       role="button"
@@ -314,19 +334,24 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
       data-dsh-selected={selected ? 'true' : undefined}
       aria-pressed={selected}
       style={{ paddingLeft: depth * 22 + 6 }}
-      onClick={(event) => { actions.activate(event, entry.path, true) }}
+      // A folded row renders the whole chain (`a/b/c`) and a plain click
+      // toggles every link at once, so the breadcrumb opens and closes as one.
+      title={chain.length > 1 ? target.path : undefined}
+      onClick={(event) => { actions.activate(event, entry.path, true, chain) }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          actions.activate(event, entry.path, true)
+          actions.activate(event, entry.path, true, chain)
         }
       }}
-      onDragOver={(event) => { actions.dragOver(event, entry.path) }}
-      onDrop={(event) => { actions.drop(event, entry.path, true) }}
-      onContextMenu={(event) => { actions.contextMenu(event, entry.path, true) }}
+      onDragOver={(event) => { actions.dragOver(event, target.path) }}
+      onDrop={(event) => { actions.drop(event, target.path, true) }}
+      onContextMenu={(event) => { actions.contextMenu(event, target.path, true) }}
     >
       {icon}
-      <span className={clsx(css.explorerName, gitChanged && css.explorerDirChanged)}>{entry.name}</span>
+      <span className={clsx(css.explorerName, gitChanged && css.explorerDirChanged)}>
+        {chain.length > 1 ? chain.map(link => link.name).join('/') : entry.name}
+      </span>
       {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
       {copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
@@ -338,7 +363,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
             title={t('referenceFile')}
             onClick={(event) => {
               event.stopPropagation()
-              actions.reference(entry.path, true)
+              actions.reference(target.path, true)
             }}
           >
             {t('referenceFile')}
@@ -433,6 +458,10 @@ export function FileTree(props: {
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft (file vs directory). */
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** The explorerExclude pref patterns: the HOST filters the listing with
+   *  them (excluded rows never arrive), so changing the list wipes the level
+   *  cache and reloads — the rows themselves need no client-side filter. */
+  exclude?: readonly string[]
   /** A rename landed (old row path → new path): the caller retargets open tabs. */
   onPathRenamed?: (oldPath: string, newPath: string) => void
   /** A delete landed: the caller closes tabs at or under the removed path. */
@@ -477,7 +506,7 @@ export function FileTree(props: {
   const {
     sessionId, cwd, expanded, revealed, onOpenFileNewTab, onOpenFileSide,
     openInApp, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin,
-    openWithShowPluginTargets,
+    openWithShowPluginTargets, exclude,
     onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, hidden, visible, service,
   } = props
   /** The live props for the stable callbacks below (identity churns per render). */
@@ -634,6 +663,15 @@ export function FileTree(props: {
   }, [])
 
   /**
+   * The exclude list by VALUE. The caller owns the array identity (the prefs
+   * store hands out one stable reference per document), but the level cache,
+   * the request payload and the reload effect all key on the CONTENT: a
+   * value-equal list that churned identity would otherwise re-list the whole
+   * tree on every render. Declared here because `loadLevels` below reads it.
+   */
+  const excludeKey = (exclude ?? []).join('\0')
+
+  /**
    * List a SET of directories into the cache with ONE `fs.trees` request.
    *
    * The visible set (the workspace root plus every expanded directory) is
@@ -693,7 +731,7 @@ export function FileTree(props: {
       | { batch: string[]; ok: false; message: string }
     void Promise.all(batches.map(async (batch): Promise<BatchOutcome> => {
       try {
-        return { batch, ok: true, levels: (await api.fsTrees({ sessionId, cwd }, batch)).levels }
+        return { batch, ok: true, levels: (await api.fsTrees({ sessionId, cwd }, batch, excludeKey === '' ? undefined : excludeKey.split('\0'))).levels }
       } catch (error: unknown) {
         return { batch, ok: false, message: error instanceof Error ? error.message : String(error) }
       }
@@ -727,7 +765,7 @@ export function FileTree(props: {
       // fresher. With nothing to keep, the per-level rows already say it.
       if (failure !== '') setLoadError(keptListing ? failure : null)
     })
-  }, [sessionId, cwd, storeLevel])
+  }, [sessionId, cwd, excludeKey, storeLevel])
 
   /**
    * Re-list one directory in place (a watch notice, or the parent of a landed
@@ -802,6 +840,20 @@ export function FileTree(props: {
     forceNextLoad.current = true
   }, [refreshTick])
 
+  // The exclude patterns are applied HOST-side, so a changed list makes every
+  // cached level stale (the old rows include entries the list now removes, and
+  // miss entries it no longer hides): wipe the cache and let the load effect
+  // below re-list the visible set in one batch. Declared BEFORE it so the wipe
+  // lands first; the first pass only records the list.
+  const lastExclude = useRef(excludeKey)
+  useEffect(() => {
+    if (lastExclude.current === excludeKey) return
+    lastExclude.current = excludeKey
+    generationRef.current += 1
+    dataRef.current = {}
+    setData({})
+  }, [excludeKey])
+
   useEffect(() => {
     // Load the visible set in ONE batch request; already-loaded levels (kept
     // in the cache) are not refetched, so this asks only for what is new — a
@@ -812,6 +864,16 @@ export function FileTree(props: {
     forceNextLoad.current = false
     loadLevels([root, ...expanded], { force })
   }, [cwd, expanded, refreshTick, loadLevels])
+
+  useEffect(() => {
+    // A fold chain runs through COLLAPSED singleton directories, so their
+    // levels are loaded ahead of any expansion (without them the breadcrumb
+    // label would grow one segment at a time as the user clicks). Each arrival
+    // can reveal the next link, hence the rescan on every cache update;
+    // loadLevels skips what is already loaded, so this settles.
+    if (cwd === undefined) return
+    loadLevels(compactLoadTargets(dataRef.current))
+  }, [cwd, data, loadLevels])
 
   // A torn-down tree must not write the answer of an in-flight batch into a
   // dead component: bumping the generation makes every late response stale.
@@ -939,7 +1001,7 @@ export function FileTree(props: {
   }
 
   // ── Stable row actions ─────────────────────────────────────────────────
-  const handleActivate = useCallback((event: ActivateModifiers, path: string, isDir: boolean): void => {
+  const handleActivate = useCallback((event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void => {
     if (event.ctrlKey || event.metaKey) {
       toggleSelect(path, isDir)
       return
@@ -950,8 +1012,18 @@ export function FileTree(props: {
     }
     // Plain click: the original semantics, plus dropping any selection.
     clearSelection()
-    if (isDir) propsRef.current.onToggle(path)
-    else propsRef.current.onOpenFile(path)
+    if (!isDir) {
+      propsRef.current.onOpenFile(path)
+      return
+    }
+    // A folded row toggles the WHOLE chain: expanding every link is what makes
+    // the tail's children render, and collapsing every link is the only way to
+    // close a chain an earlier expansion (before the fold formed) left open.
+    const links = chain !== undefined && chain.length > 0 ? chain.map(link => link.path) : [path]
+    const open = links.some(link => expandedSetRef.current.has(link))
+    for (const link of links) {
+      if (expandedSetRef.current.has(link) === open) propsRef.current.onToggle(link)
+    }
   }, [clearSelection, selectRange, toggleSelect])
 
   const handleContextMenu = useCallback((event: MouseEvent<HTMLDivElement>, path: string, isDir: boolean): void => {
@@ -1478,6 +1550,24 @@ export function FileTree(props: {
    *  a parked tab unsubscribes from the poll. */
   const gitStatus = useGitStatus({ sessionId, cwd }, { visible: visible !== false })
 
+  /**
+   * Fold chains (VSCode "compact folders"): resolved ONCE per level-cache
+   * revision and REUSED while it stands. {@link DirRow} is memoized on prop
+   * identity, so handing it a freshly built array on every render would
+   * re-render every directory row for a selection, a hover or a copy flash —
+   * exactly what the row memoization exists to prevent.
+   */
+  const chainFor = useMemo(() => {
+    const cache = new Map<string, readonly FsEntry[]>()
+    return (entry: FsEntry): readonly FsEntry[] => {
+      const cached = cache.get(entry.path)
+      if (cached !== undefined) return cached
+      const chain: readonly FsEntry[] = entry.compact === true ? compactChain(entry, path => data[path]) : [entry]
+      cache.set(entry.path, chain)
+      return chain
+    }
+  }, [data])
+
   // The Shift range walks the rows the user can actually see: depth-first,
   // expanded state decides. Recomputed with the level cache, never rendered.
   const visibleRows = useMemo(() => {
@@ -1486,13 +1576,19 @@ export function FileTree(props: {
       const level = data[dir]
       if (level?.entries === undefined) return
       for (const entry of level.entries) {
+        // A folded row IS one row: its identity is the chain head (the level
+        // entry the walk is on), and it descends into the chain TAIL — the
+        // same shape `renderLevel` draws, so a Shift range covers what the
+        // user sees.
         rows.push({ path: entry.path, isDir: entry.isDir })
-        if (entry.isDir && expandedSet.has(entry.path)) walk(entry.path)
+        if (!entry.isDir) continue
+        const chain = chainFor(entry)
+        if (chain.some(link => expandedSet.has(link.path))) walk(chain[chain.length - 1]!.path)
       }
     }
     if (root !== undefined) walk(root)
     return rows
-  }, [data, expandedSet, root])
+  }, [chainFor, data, expandedSet, root])
   visibleRowsRef.current = visibleRows
 
   /**
@@ -1618,28 +1714,41 @@ export function FileTree(props: {
       <>
         {head}
         {entries.map((entry) => {
+          // Fold chains (VSCode "compact folders"): a chain of dirs holding
+          // exactly one real dir child each renders as ONE `a/b/c` row; the
+          // chain pauses at whatever the level cache has loaded. Resolved for
+          // directories only, and through the per-revision cache so DirRow's
+          // memoization survives an unrelated re-render.
+          const chain = entry.isDir ? chainFor(entry) : undefined
           // The row being renamed renders as its editor (no button semantics:
           // an editor is not a click target — and a nested interactive inside
-          // role="button" would be invalid anyway).
-          if (renaming?.path === entry.path) return renderRenameRow(entry, depth)
-          if (entry.isDir) {
-            const isOpen = expandedSet.has(entry.path)
+          // role="button" would be invalid anyway). A folded row's menu
+          // addressed its TAIL, so any chain link puts the whole row here.
+          if (renaming !== null && (renaming.path === entry.path || chain?.some(link => link.path === renaming.path) === true)) {
+            return renderRenameRow(entry, depth)
+          }
+          if (chain !== undefined) {
+            const tail = chain[chain.length - 1]!
+            const isOpen = chain.some(link => expandedSet.has(link.path))
             return (
               <div key={entry.path}>
                 <DirRow
                   entry={entry}
+                  chain={chain}
                   depth={depth}
                   expanded={isOpen}
                   iconsVersion={iconsVersion}
                   service={service}
                   selected={selected.has(entry.path)}
-                  revealed={revealedSet.has(entry.path)}
-                  dropTarget={dropTarget === entry.path}
+                  // Reveal-anchor: a reveal names a specific directory, which
+                  // may be a MID-chain link — mark the row that renders it.
+                  revealed={chain.some(link => revealedSet.has(link.path))}
+                  dropTarget={dropTarget === tail.path}
                   gitChanged={gitStatus.dirHasChanges(entry.path)}
                   copied={copiedPath === entry.path}
                   actions={actions}
                 />
-                {isOpen && renderLevel(entry.path, depth + 1)}
+                {isOpen && renderLevel(tail.path, depth + 1)}
               </div>
             )
           }
