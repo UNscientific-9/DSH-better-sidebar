@@ -1,11 +1,14 @@
 /**
  * The files window's tree surface: a global file-name search box on top
  * (300ms debounce; an in-flight search is aborted by the next keystroke)
- * over either the shared controlled FileTree (empty query) or the flat
- * result list (relative paths; click opens through the caller's mode-aware
- * open). Owns its refresh tick: the icon next to the search input clears
- * the tree cache. EditorHost docks it as the tab's right panel (wrapped in
- * a drag-resize handle) and provides the file context-menu open escapes.
+ * over the shared controlled FileTree. The results panel and the tree are
+ * BOTH mounted: the query only parks one of them (`hidden`), so clearing the
+ * search is free — the tree keeps its level cache and the live directory
+ * watcher (the old conditional render dropped both and refetched the whole
+ * visible set on every query change). Owns its refresh tick: the icon next to
+ * the search input clears the tree cache. EditorHost docks it as the tab's
+ * right panel (wrapped in a drag-resize handle) and provides the file
+ * context-menu open escapes.
  *
  * Uploads (header pickers, the tree's drag-drop and "upload here" menu)
  * all funnel through here: one session at a time, shown in a full-window
@@ -17,15 +20,17 @@
  */
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
-import type { SidebarStore } from './state.ts'
+import { ancestorDirs } from './state.ts'
 import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
+import type { OpenInApp } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
-import { resolveSidebarPath } from './produced-files.ts'
+import { resolveSidebarPath } from './paths.ts'
+import { IconButton } from './ui/index.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
   summarizeResults, uploadHintText, uploadItemsFromFiles, uploadToDir,
@@ -46,8 +51,6 @@ interface UploadSession {
 export function TreePanel(props: {
   sessionId: string
   cwd: string | undefined
-  /** The sidebar store (passed through to the tree's fence-refusal notice). */
-  store: SidebarStore
   expanded: string[]
   revealed: string[]
   onToggle: (path: string) => void
@@ -56,27 +59,42 @@ export function TreePanel(props: {
   onOpenFileNewTab?: (path: string) => void
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
-  /** The "open with" menu surface (passed through to FileTree; absent →
-   *  the whole section is hidden). */
+  /** The host's open-in-app handle (passed through to FileTree; absent →
+   *  the HOST half of the "打开方式" section is hidden). */
+  openInApp?: OpenInApp
+  /** The plugin's own open-with targets (passed through to FileTree; coexists
+   *  with `openInApp`; absent → no plugin half). */
   openWithTargets?: OpenWithTarget[]
   openWithPinned?: string[]
   openWithSsh?: boolean
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
+  /** Show the plugin's own open-with targets even when the host lists local
+   *  applications for the path (the `openWithPluginTargets` setting; passed
+   *  through to FileTree). */
+  openWithShowPluginTargets?: boolean
   onReferenceFile: (path: string, isDir: boolean) => void
   /** A tree rename landed (passed through to FileTree for tab retargeting). */
   onPathRenamed?: (oldPath: string, newPath: string) => void
   /** A tree delete landed (passed through to FileTree for tab closing). */
   onPathDeleted?: (path: string, isDir: boolean) => void
+  /** Whether the owning tab is on screen: a parked tab stops the tree's git
+   *  polling (the shared status store pauses when nothing visible wants it). */
+  visible?: boolean
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
   /** The sidebar registry service (file-icon registrations; passed through to FileTree). */
   service?: BetterSidebarService
 }) {
-  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, full, service } = props
+  const {
+    sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide,
+    openInApp, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin,
+    openWithShowPluginTargets,
+    onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
+  } = props
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
+  const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
 
@@ -153,6 +171,7 @@ export function TreePanel(props: {
   const folderInputProps = { webkitdirectory: '' } as InputHTMLAttributes<HTMLInputElement>
 
   const needle = query.trim()
+  const searching = needle !== ''
   useEffect(() => {
     if (needle === '') {
       setResults(null)
@@ -177,6 +196,27 @@ export function TreePanel(props: {
   }, [sessionId, cwd, needle])
 
   const busy = upload !== null
+  /** Directory hits (the host reports them separately): a click navigates the
+   *  tree for those rows instead of opening them as files. */
+  const dirHits = new Set(results?.dirs)
+
+  /**
+   * Jump to a DIRECTORY hit in the tree. Results include directories (they
+   * show where matches live) and `fs.read` refuses one, so opening such a row
+   * as a file surfaced a bare `"…" is a directory` error. Expand the folder
+   * and its ancestors instead — `onToggle` FLIPS a row, so only collapsed
+   * paths are touched — and clear the query so the tree, not the parked
+   * results panel, is what the user sees next.
+   */
+  const openSearchDir = (rel: string): void => {
+    const target = resolveSidebarPath(cwd, rel)
+    if (cwd !== undefined) {
+      for (const path of [...ancestorDirs(cwd, [target]), target]) {
+        if (!expanded.includes(path)) onToggle(path)
+      }
+    }
+    setQuery('')
+  }
 
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
@@ -188,35 +228,23 @@ export function TreePanel(props: {
           spellCheck={false}
           onChange={(event) => { setQuery(event.target.value) }}
         />
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('refresh')}
-          title={t('refresh')}
+        <IconButton
+          label={t('refresh')}
+          icon={<IconRefreshOutlineRegular size={14} />}
           onClick={() => { setRefreshTick(tick => tick + 1) }}
-        >
-          <IconRefreshOutline16 size={14} />
-        </button>
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('uploadFiles')}
-          title={t('uploadFiles')}
+        />
+        <IconButton
+          label={t('uploadFiles')}
+          icon={<IconUploadOutline16 size={14} />}
           disabled={busy}
           onClick={() => { fileInputRef.current?.click() }}
-        >
-          <IconUploadOutline16 size={14} />
-        </button>
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('uploadFolder')}
-          title={t('uploadFolder')}
+        />
+        <IconButton
+          label={t('uploadFolder')}
+          icon={<IconFolderOpenRegular size={14} />}
           disabled={busy}
           onClick={() => { folderInputRef.current?.click() }}
-        >
-          <IconFolderOpen16 size={14} />
-        </button>
+        />
         <input
           ref={fileInputRef}
           type="file"
@@ -242,53 +270,73 @@ export function TreePanel(props: {
       {uploadStatus !== '' && (
         <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
       )}
-      {needle === '' ? (
-        <FileTree
-          sessionId={sessionId}
-          cwd={cwd}
-          store={store}
-          expanded={expanded}
-          revealed={revealed}
-          onToggle={onToggle}
-          onOpenFile={onOpenFile}
-          onOpenFileNewTab={onOpenFileNewTab}
-          onOpenFileSide={onOpenFileSide}
-          openWithTargets={openWithTargets}
-          openWithPinned={openWithPinned}
-          openWithSsh={openWithSsh}
-          onOpenWith={onOpenWith}
-          onToggleOpenWithPin={onToggleOpenWithPin}
-          onReferenceFile={onReferenceFile}
-          onPathRenamed={onPathRenamed}
-          onPathDeleted={onPathDeleted}
-          refreshTick={refreshTick}
-          onUploadRequest={startUpload}
-          busy={busy}
-          service={service}
-        />
-      ) : (
-        <div className={css.explorerBody}>
-          {error !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{error}</div>}
-          {error === null && results === null && <div className={css.editorSearchHint}>{t('loading')}</div>}
-          {error === null && results !== null && results.matches.length === 0 && (
-            <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
-          )}
-          {error === null && results !== null && results.matches.map(rel => (
-            <button
-              key={rel}
-              type="button"
-              className={css.editorSearchResult}
-              title={rel}
-              onClick={() => { onOpenFile(resolveSidebarPath(cwd, rel)) }}
-            >
-              {rel}
-            </button>
-          ))}
-          {error === null && results?.truncated === true && (
-            <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
-          )}
-        </div>
-      )}
+      {/* Search results: parked (not unmounted) while the query is empty. Its
+          contents render only for a live query — a parked panel must not put
+          state text (the loading line) into the panel's DOM. */}
+      <div
+        className={clsx(css.explorerBody, !searching && css.explorerHiddenPane)}
+        hidden={!searching}
+      >
+        {searching && (
+          <>
+            {error !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{error}</div>}
+            {error === null && results === null && <div className={css.editorSearchHint}>{t('loading')}</div>}
+            {error === null && results !== null && results.matches.length === 0 && (
+              <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
+            )}
+            {error === null && results !== null && results.matches.map((rel) => {
+              const isDirHit = dirHits.has(rel)
+              return (
+                <button
+                  key={rel}
+                  type="button"
+                  className={clsx(css.editorSearchResult, isDirHit && css.editorSearchResultDir)}
+                  title={rel}
+                  data-dsh-search-dir={isDirHit ? 'true' : undefined}
+                  onClick={() => {
+                    if (isDirHit) openSearchDir(rel)
+                    else onOpenFile(resolveSidebarPath(cwd, rel))
+                  }}
+                >
+                  {isDirHit && <IconFolderOpenRegular size={14} />}
+                  <span className={css.editorSearchResultLabel}>{rel}</span>
+                </button>
+              )
+            })}
+            {error === null && results?.truncated === true && (
+              <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
+            )}
+          </>
+        )}
+      </div>
+      {/* The tree stays MOUNTED while searching: its level cache and the
+          directory watcher survive a query, so clearing the box is free. */}
+      <FileTree
+        sessionId={sessionId}
+        cwd={cwd}
+        expanded={expanded}
+        revealed={revealed}
+        onToggle={onToggle}
+        onOpenFile={onOpenFile}
+        onOpenFileNewTab={onOpenFileNewTab}
+        onOpenFileSide={onOpenFileSide}
+        openInApp={openInApp}
+        openWithTargets={openWithTargets}
+        openWithPinned={openWithPinned}
+        openWithSsh={openWithSsh}
+        onOpenWith={onOpenWith}
+        onToggleOpenWithPin={onToggleOpenWithPin}
+        openWithShowPluginTargets={openWithShowPluginTargets}
+        onReferenceFile={onReferenceFile}
+        onPathRenamed={onPathRenamed}
+        onPathDeleted={onPathDeleted}
+        refreshTick={refreshTick}
+        onUploadRequest={startUpload}
+        busy={busy}
+        hidden={searching}
+        visible={visible !== false}
+        service={service}
+      />
       {upload !== null && (
         <UploadOverlay
           dir={upload.dir}

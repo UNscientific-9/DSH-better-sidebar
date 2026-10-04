@@ -33,8 +33,18 @@ import { PAGE_URL, createHostApi, hostRpc, sendFirstMessage } from './host'
  *  share seed paths with mount/drag). */
 const WORKSPACE_PATH = process.env.DSH_E2E_PERF_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-perf-workspace')
 
-/** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
+/**
+ * Every tab type the composed guide must offer: the plugin's own four plus the
+ * host's `terminal`. This plugin deliberately ships neither terminal nor
+ * browser, so exactly one `terminal` entry proves it is not shadowing the host.
+ *
+ * `browser` is deliberately absent: DSH 0.1.7 mounts
+ * `@deepseek-ai/dsh-client-ui-sidebar-browser` only for the desktop profile and
+ * this lane drives the web profile, so demanding a `browser` entry would demand
+ * something the host itself stopped offering. mount.e2e.ts asserts the absence
+ * explicitly. The ids are the guides' `data-sidebar-right-guide-entry` keys.
+ */
+const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal'] as const
 
 let api: APIRequestContext
 
@@ -196,8 +206,9 @@ test('measure: bottom-strip drag frame pacing', async ({ page }) => {
   // The plugin pushes no width ever (the right column is DSH's native
   // Sidebar), so the drag must never write --dsh-sidebar-width — the guard
   // the drag lane locks, recorded here for the perf story.
-  const bottomExpand = page.locator('[data-dsh-bottom-toggle]')
-  await expect(bottomExpand).toHaveCount(1)
+  // 同上：入口按「屏幕内可见」断言与点击（其它会话的隐藏副本不算数）。
+  const bottomExpand = page.locator('[data-dsh-bottom-toggle]:visible').first()
+  await expect(bottomExpand).toBeVisible()
   await bottomExpand.click()
   await expect
     .poll(async () => {

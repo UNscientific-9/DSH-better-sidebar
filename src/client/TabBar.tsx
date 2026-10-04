@@ -1,22 +1,18 @@
 /**
  * The tab strip of one pane: tabs capped at TAB_MAX_WIDTH (ellipsized),
  * overflow scrolls horizontally, a close button per tab, a four-way split
- * button cluster, and the + menu that opens new tabs (explorer / git /
- * terminal). Tabs are draggable; dropping onto another tab inserts before it,
- * dropping on the strip background appends to this pane. Right-clicking a
- * tab opens the tab context menu (close / close others / close to the left /
- * close to the right, the close ones scoped to this pane).
+ * button cluster, and the + menu that opens new tabs (explorer / git). Tabs
+ * are draggable; dropping onto another tab inserts before it, dropping on the
+ * strip background appends to this pane. Right-clicking a tab opens the tab
+ * context menu (close / close others / close to the left / close to the
+ * right, the close ones scoped to this pane).
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCloseFill14, IconPlusOutline16, Menu,
+  IconCloseFillRegular, IconPlusOutlineRegular, Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
-import { isAgentTabId } from './state.ts'
-import { isPinnedVirtualTab } from './pinned.ts'
-import { useSubmenuFlip } from './menu-flip.ts'
-import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -67,34 +63,45 @@ export function TabBar(props: {
   newTabOptions: NewTabOption[]
   /** Drop of a tab from any pane: (payload, insertBeforeTabId | null). */
   onDropTab: (payload: TabDragPayload, before: string | null) => void
-  /**
-   * Pin/unpin a terminal tab (v0.17.0+). Called with `'workspace'` or
-   * `'global'` to pin (the shell snapshots the home cwd), or `null` to
-   * unpin. Non-terminal tabs never trigger this callback. Optional: the
-   * menu hides the pin entry when unset (legacy callers).
-   */
-  onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
   /** Icon resolver for tab labels (reads from the tab descriptor registry). */
   getTabIcon?: (tab: SidebarTab) => ReactNode
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /**
+   * Right-aligned action area resolver for the active tab: returns a
+   * ReactNode rendered at the tab strip's right end (between the + button
+   * and the panel's close control), or null/undefined for none. Lets a
+   * descriptor (e.g. a terminal tab) inject its own toolbar (new / split /
+   * restart) directly into the strip instead of a separate header row.
+   * Receives the strip's `paneId` alongside the active tab so the resolver
+   * can tell WHICH instance's strip it is decorating (split panes each
+   * render their own).
+   */
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onPinTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, getTabRightActions,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
   // position (the portaled Menu anchors there, following the git lens/FileTree).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
-  // The strip sits at the panel's top, so the pin submenu must grow downward;
-  // the flip hook derives that from the cursor y (upper half → "down").
-  useSubmenuFlip(tabMenu)
   const [dragOver, setDragOver] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   // The context target's index in the render-time tab snapshot; -1 when the
   // tab disappeared since the menu opened (the menu hides then).
   const tabMenuIndex = tabMenu === null ? -1 : tabs.findIndex(tab => tab.id === tabMenu.tabId)
+
+  // The active tab's right-actions node, resolved up front so the render
+  // below can skip the wrapper entirely when there is nothing to show (an
+  // empty wrapper is a flex item and would still affect the strip layout).
+  // `false` is treated like null: React renders it as nothing anyway.
+  const activeRightTab = tabs.find(tab => tab.id === active)
+  const rightActions = getTabRightActions !== undefined && activeRightTab !== undefined
+    ? getTabRightActions(activeRightTab, paneId)
+    : null
+  const hasRightActions = rightActions !== null && rightActions !== undefined && rightActions !== false
 
   // Middle-click close: the press target is recorded on middle mousedown
   // (preventDefaulted to disarm Chrome's middle-click autoscroll — its
@@ -183,15 +190,13 @@ export function TabBar(props: {
       }}
     >
       <div ref={listRef} className={css.tabList}>
-        {tabs.map(tab => {
-          const pinned = isPinnedVirtualTab(tab) || tab.pin !== undefined
-          return (
+        {tabs.map(tab => (
           <div
             key={tab.id}
-            className={clsx(css.tab, active === tab.id && css.tabActive, pinned && css.pinnedTab)}
+            className={clsx(css.tab, active === tab.id && css.tabActive)}
             title={tab.title}
-            draggable={!pinned}
-            onDragStart={pinned ? undefined : (event) => {
+            draggable
+            onDragStart={(event) => {
               setTabDragging(true)
               event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
               event.dataTransfer.effectAllowed = 'move'
@@ -199,7 +204,6 @@ export function TabBar(props: {
             onDragEnd={() => { setTabDragging(false); setDragOver(false) }}
             onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
             onDrop={(event) => {
-              if (pinned) { event.stopPropagation(); return }
               event.preventDefault()
               event.stopPropagation()
               setTabDragging(false)
@@ -228,7 +232,6 @@ export function TabBar(props: {
               setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
             }}
           >
-            {pinned && <IconPinOutline16 size={16} />}
             {getTabIcon?.(tab) ?? null}
             {getTabBadge?.(tab) ?? null}
             <span className={css.tabTitle}>{tab.title}</span>
@@ -241,11 +244,10 @@ export function TabBar(props: {
                 onClose(tab.id)
               }}
             >
-              <IconCloseFill14 />
+              <IconCloseFillRegular size={14} />
             </button>
           </div>
-          )
-        })}
+        ))}
         {/*
           The + sits immediately after the rightmost tab (sticky at the
           right edge of the scrollport when the tabs overflow, so it stays
@@ -275,7 +277,7 @@ export function TabBar(props: {
               title={t('newTab')}
               onClick={() => { setMenuOpen(v => !v); setTabMenu(null) }}
             >
-              <IconPlusOutline16 />
+              <IconPlusOutlineRegular />
             </button>
           )}
         />
@@ -284,62 +286,25 @@ export function TabBar(props: {
           so the panel's overflow clip cannot crop it). Close operations are
           scoped to THIS pane: "close others/left/right" walk the render-time
           tab snapshot and reuse the per-tab onClose path (which routes
-          through the service and releases terminals), so the target tab is
-          never closed and the pane never empties mid-loop.
+          through the service), so the target tab is never closed and the
+          pane never empties mid-loop.
         */}
         <Menu
           open={tabMenu !== null && tabMenuIndex >= 0}
           onClose={() => { setTabMenu(null) }}
-          items={(() => {
-            // The target tab drives the pin entry's shape: terminal tabs
-            // get either a "Pin ▸" submenu (unpinned) or a single "Unpin"
-            // row (pinned). Non-terminal tabs and missing onPinTab get no
-            // pin entry at all. Pinned VIRTUAL tabs (injected from other
-            // sessions) get a stripped menu: only Unpin + Close (no
-            // close-others/left/right — those are pane-scoped operations
-            // that don't apply to cross-session virtual tabs).
-            const targetTab = tabMenuIndex >= 0 ? tabs[tabMenuIndex] : undefined
-            const isTerminal = targetTab?.type === 'terminal'
-            const isPinnedVirtual = targetTab !== undefined && isPinnedVirtualTab(targetTab)
-            const pinEntries = isTerminal && onPinTab !== undefined
-              ? targetTab!.pin !== undefined
-                ? [{ id: 'unpin', label: t('unpinTerminal') }]
-                : [{
-                    id: 'pin',
-                    label: isAgentTabId(targetTab!.id) ? t('pinAgentTerminal') : t('pinTerminal'),
-                    submenu: [
-                      { id: 'pinWorkspace', label: t('pinToWorkspace') },
-                      { id: 'pinGlobal', label: t('pinToGlobal') },
-                    ],
-                  }]
-              : []
-            if (isPinnedVirtual) {
-              return [
-                ...pinEntries,
-                { id: 'close', label: t('close') },
-              ]
-            }
-            return [
-              ...pinEntries,
-              { id: 'close', label: t('close') },
-              { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
-              { id: 'closeLeft', label: t('closeLeftTabs'), ...(tabMenuIndex <= 0 ? { disabled: true } : {}) },
-              { id: 'closeRight', label: t('closeRightTabs'), ...(tabMenuIndex >= tabs.length - 1 ? { disabled: true } : {}) },
-            ]
-          })()}
+          items={[
+            { id: 'close', label: t('close') },
+            { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
+            { id: 'closeLeft', label: t('closeLeftTabs'), ...(tabMenuIndex <= 0 ? { disabled: true } : {}) },
+            { id: 'closeRight', label: t('closeRightTabs'), ...(tabMenuIndex >= tabs.length - 1 ? { disabled: true } : {}) },
+          ]}
           onSelect={(id) => {
             const target = tabMenu
             if (target === null) return
             setTabMenu(null)
             const index = tabs.findIndex(tab => tab.id === target.tabId)
             if (index < 0) return
-            if (id === 'pinWorkspace') {
-              onPinTab?.(target.tabId, 'workspace')
-            } else if (id === 'pinGlobal') {
-              onPinTab?.(target.tabId, 'global')
-            } else if (id === 'unpin') {
-              onPinTab?.(target.tabId, null)
-            } else if (id === 'close') {
+            if (id === 'close') {
               onClose(target.tabId)
             } else if (id === 'closeOthers') {
               for (const tab of tabs) {
@@ -358,6 +323,18 @@ export function TabBar(props: {
           anchor={<span />}
         />
       </div>
+      {/*
+        The active tab's right-aligned action area: rendered at the tab
+        strip's right end (after the + menu, before the panel's close
+        control). A descriptor that declares `rightActions` supplies its own
+        toolbar here (e.g. a terminal tab's new / split / restart buttons),
+        so the page's controls live in the strip instead of a separate header
+        row below it. The node is resolved BEFORE the wrapper is created: a
+        resolver returning null/undefined (or false) must leave the strip
+        exactly as it was — an empty flex item would still take part in the
+        strip's layout and change every existing tab bar.
+      */}
+      {hasRightActions ? <div className={css.tabBarRightActions}>{rightActions}</div> : null}
     </div>
   )
 }
