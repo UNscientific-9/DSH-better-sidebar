@@ -61,6 +61,7 @@ import {
   threadTrailingPending,
   type SidechatLiveEvent,
   type SidechatThreadInfo,
+  type SideThreadRow,
 } from '../sidechat-core.ts'
 import {
   formatDurationMs,
@@ -109,6 +110,60 @@ export function consumeSidechatSeed(): string | undefined {
 /** In-flight thread creations keyed by tab id (double-mount guard: React
  *  StrictMode / HMR must not mint two threads for one tab). */
 const inFlightStarts = new Set<string>()
+
+/** Where the last side-chat thread of each main session is remembered (the
+ *  client store's own key space, like the diff pane's redaction flag). */
+const LAST_THREAD_KEY = 'dsh-sidebar:v1:sidechat-thread'
+
+/** The in-memory mirror of {@link LAST_THREAD_KEY}. */
+const lastThreadBySession = new Map<string, string>()
+
+/** Whether the localStorage mirror has been read into the map yet. */
+let lastThreadsLoaded = false
+
+/**
+ * A native tab's record and its navigation params live in the host's memory
+ * only, so collapsing the sidebar (or restarting DSH) remounts the tab with
+ * NO thread bound — the autoCreate path — and the reader would land in a
+ * brand-new empty thread instead of the one they were in. Remembering the
+ * last thread per session is what makes the reattach below possible; the
+ * storage is best-effort (a denied or unparseable entry just means the
+ * reattach falls back to the newest thread).
+ */
+function loadLastThreads(): void {
+  if (lastThreadsLoaded) return
+  lastThreadsLoaded = true
+  try {
+    const raw = localStorage.getItem(LAST_THREAD_KEY)
+    if (raw === null) return
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return
+    for (const [sessionId, threadId] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof threadId === 'string') lastThreadBySession.set(sessionId, threadId)
+    }
+  } catch {
+    // No storage (or unreadable JSON): nothing was remembered.
+  }
+}
+
+/** The thread a session's side-chat tab was last bound to, if any. */
+function lastSidechatThread(sessionId: string): string | undefined {
+  loadLastThreads()
+  return lastThreadBySession.get(sessionId)
+}
+
+/** Remember the side-chat thread a session is bound to (also across reloads). */
+function rememberSidechatThread(sessionId: string, threadId: string): void {
+  loadLastThreads()
+  if (lastThreadBySession.get(sessionId) === threadId) return
+  lastThreadBySession.set(sessionId, threadId)
+  try {
+    localStorage.setItem(LAST_THREAD_KEY, JSON.stringify(Object.fromEntries(lastThreadBySession)))
+  } catch {
+    // A full or denied storage keeps the in-memory binding: reattaching
+    // within this page still works, only a reload loses it.
+  }
+}
 
 /** Per-thread transcript cache: thread-own events merged by seq (polls ride
  * the afterSeq delta and never re-download what they already hold). */
@@ -446,6 +501,19 @@ export function SideChatView(props: {
     return sideThreadRows(list.byId, scope.sessionId).filter(row => !archived.has(row.id))
   }, [list, scope.sessionId, archivedIds])
 
+  /** The newest thread of `candidates`: the session list carries the thread
+   *  rows but not their age, so the creation order comes from the host's
+   *  subagent catalog. An untouched "new thread" placeholder only wins when
+   *  nothing else is left. */
+  const newestThreadId = useCallback((candidates: readonly SideThreadRow[]): string | undefined => {
+    const catalog = list.projectionsBySession?.[scope.sessionId]?.values.subagentCatalog
+    const rank = (id: string): number => catalog?.find(entry => entry.id === id)?.createdAt ?? 0
+    const real = candidates.filter(row => row.title !== SIDE_NEW_THREAD_TITLE)
+    const pool = real.length > 0 ? real : candidates
+    if (pool.length === 0) return undefined
+    return pool.reduce((newest, row) => (rank(row.id) > rank(newest.id) ? row : newest)).id
+  }, [list, scope.sessionId])
+
   // The thread this tab is bound to rides tab.meta (refresh-restored).
   const threadId = sidechatThreadIdOf(tab)
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
@@ -501,12 +569,41 @@ export function SideChatView(props: {
     }
   }, [ctx, scope.sessionId, tab.id])
 
-  // Codex-style immediate create: an autoCreate tab spawns its thread as
-  // soon as it first renders.
+  /**
+   * The existing thread an unbound side chat should reattach to: the binding
+   * this session was last in (kept only while the thread is still listed — a
+   * deleted or archived thread must not be revived), then the newest thread
+   * that already carries a real first prompt.
+   */
+  const reattachTarget = useCallback((): string | undefined => {
+    const remembered = lastSidechatThread(scope.sessionId)
+    if (remembered !== undefined && (threads.length === 0 || threads.some(row => row.id === remembered))) {
+      return remembered
+    }
+    return newestThreadId(threads)
+  }, [newestThreadId, scope.sessionId, threads])
+
+  // Codex-style immediate create: an autoCreate tab spawns its thread as soon
+  // as it first renders. A tab that LOST its binding (a panel collapse or a
+  // restart — the host holds navigation params in memory only, see
+  // loadLastThreads) reattaches to the thread the session was last in instead
+  // of leaving yet another orphan "Side: New thread" session behind.
   useEffect(() => {
     if (threadId !== undefined || !autoCreate || !visible) return
+    const reattach = reattachTarget()
+    if (reattach !== undefined) {
+      // Name the seat session: the same native id names a tab in every session.
+      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: reattach } }, scope.sessionId)
+      return
+    }
     void startThread()
-  }, [threadId, autoCreate, visible, startThread])
+  }, [threadId, autoCreate, visible, startThread, reattachTarget, ctx, tab.id, scope.sessionId])
+
+  // Remember the thread this tab holds, so reopening the panel (or a restart)
+  // reattaches it instead of minting another one.
+  useEffect(() => {
+    if (threadId !== undefined) rememberSidechatThread(scope.sessionId, threadId)
+  }, [threadId, scope.sessionId])
 
   // The tab title follows the thread's durable label (the first prompt
   // renames the thread; the strip picks it up here).
@@ -648,11 +745,27 @@ export function SideChatView(props: {
     scroller.scrollTop = scroller.scrollHeight
   }, [rows.length, threadId])
 
-  /** Open a NEW thread tab (createTab mints the autoCreate tab; its view
-   *  creates the thread on mount). */
-  const openNewThread = (): void => {
+  /** Open a NEW thread tab: the thread is created FIRST and parked for the
+   *  descriptor's createTab, so the tab that opens is already bound to it —
+   *  the pane never sits on the empty hero while a thread is being created,
+   *  and the native page kind (which re-delivers its one tab instead of
+   *  copying it) switches to the new thread through the same navigation the
+   *  thread menu uses. */
+  const openNewThread = async (): Promise<void> => {
     setMenuOpen(false)
-    ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
+    if (busy !== null) return
+    setBusy('starting')
+    setError(null)
+    try {
+      const { childId } = await api.sidechatStart(scope.sessionId)
+      rememberSidechatThread(scope.sessionId, childId)
+      parkSidechatReopen(childId)
+      ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
   }
 
   /** Switch to an existing thread: parked for createTab, deduped to the
@@ -721,15 +834,10 @@ export function SideChatView(props: {
    *  order), the newest placeholder only when nothing else is left, and
    *  `undefined` when the thread menu is empty — the tab then unbinds to the
    *  empty state instead of staying bound to an archived session. */
-  const fallbackThreadId = useCallback((excludeId: string): string | undefined => {
-    const candidates = threads.filter(row => row.id !== excludeId)
-    const catalog = list.projectionsBySession?.[scope.sessionId]?.values.subagentCatalog
-    const rank = (id: string): number => catalog?.find(entry => entry.id === id)?.createdAt ?? 0
-    const real = candidates.filter(row => row.title !== SIDE_NEW_THREAD_TITLE)
-    const pool = real.length > 0 ? real : candidates
-    if (pool.length === 0) return undefined
-    return pool.reduce((newest, row) => (rank(row.id) > rank(newest.id) ? row : newest)).id
-  }, [list, scope.sessionId, threads])
+  const fallbackThreadId = useCallback(
+    (excludeId: string): string | undefined => newestThreadId(threads.filter(row => row.id !== excludeId)),
+    [newestThreadId, threads],
+  )
 
   const handleSave = async (): Promise<void> => {
     if (threadId === undefined || !canSave || busy !== null) return
@@ -792,11 +900,11 @@ export function SideChatView(props: {
               busy === 'starting' && css.sidechatShimmerText,
             )}
           >
-            {busy === 'starting' ? t('sideChatCreating') : t('sideChatEmpty')}
+            {busy === 'starting' || (autoCreate && error === null) ? t('sideChatCreating') : t('sideChatEmpty')}
           </div>
           <div className={css.sidechatHeroDesc}>{t('sideChatEmptyDesc')}</div>
           {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
-          {busy !== 'starting' && (
+          {busy !== 'starting' && (!autoCreate || error !== null) && (
             <button
               type="button"
               className={css.sidechatPrimaryBtn}
@@ -830,7 +938,7 @@ export function SideChatView(props: {
           )}
           items={menuItems}
           selectedId={threadId}
-          onSelect={(id) => { if (id === '$new') openNewThread(); else openExistingThread(id) }}
+          onSelect={(id) => { if (id === '$new') void openNewThread(); else openExistingThread(id) }}
           onClose={() => { setMenuOpen(false) }}
           align="end"
           portal
