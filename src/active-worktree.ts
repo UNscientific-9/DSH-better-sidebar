@@ -52,7 +52,14 @@ const activeWorktreeRootCache = new Map<string, { root: string; base: string; ex
 const pathTopCache = new Map<string, string | undefined>()
 const linkedWorktreeCache = new Map<string, boolean>()
 
-/** Normalized identity of a path (case- and separator-insensitive). */
+/**
+ * Normalized IDENTITY of a path (case- and separator-insensitive), for
+ * comparisons and cache keys only: it lowercases, so it must never be handed
+ * back to the filesystem. On Linux (case-sensitive) `…/iHpOqm` → `…/ihpoqm`
+ * is a different, usually non-existent path, and probing it silently drops
+ * the candidate; macOS and Windows mask that because their filesystems fold
+ * case. Keep the real path next to its key.
+ */
 function pathKeyOf(value: string): string {
   return value.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
 }
@@ -87,12 +94,21 @@ function normalizeActivePath(value: string): string {
   return trimmed.replace(/[\\/]+/g, sep)
 }
 
-function addActivePath(map: Map<string, number>, value: unknown, weight: number): void {
+/** One candidate path mentioned by a tool call, with its accumulated score. */
+interface ActivePathEntry {
+  /** The real path (original case), the only form safe to probe. */
+  path: string
+  score: number
+}
+
+function addActivePath(map: Map<string, ActivePathEntry>, value: unknown, weight: number): void {
   if (typeof value !== 'string') return
   const normalized = normalizeActivePath(value)
   if (normalized === '' || !isAbsolute(normalized)) return
   const key = pathKeyOf(normalized)
-  map.set(key, (map.get(key) ?? 0) + weight)
+  const entry = map.get(key)
+  if (entry === undefined) map.set(key, { path: normalized, score: weight })
+  else entry.score += weight
 }
 
 /**
@@ -101,7 +117,7 @@ function addActivePath(map: Map<string, number>, value: unknown, weight: number)
  * @param map - accumulator keyed by normalized path identity.
  * @param structured - whether the current value sits in a cwd/workdir/path field.
  */
-function collectActivePaths(value: unknown, map: Map<string, number>, structured: boolean): void {
+function collectActivePaths(value: unknown, map: Map<string, ActivePathEntry>, structured: boolean): void {
   if (typeof value === 'string') {
     if (isAbsolute(value)) {
       addActivePath(map, value, structured ? 8 : 1)
@@ -175,22 +191,22 @@ async function activeRootFromEvents(events: readonly SidebarSessionEvent[], base
   for (let index = events.length - 1; index >= start; index -= 1) {
     const event = events[index]
     if (event === undefined || event.type !== 'tool/call') continue
-    const weights = new Map<string, number>()
+    const weights = new Map<string, ActivePathEntry>()
     collectActivePaths(event.data, weights, false)
     if (weights.size === 0) continue
-    const ordered = [...weights.entries()].sort((left, right) => right[1] - left[1])
+    const ordered = [...weights.values()].sort((left, right) => right.score - left.score)
     const scores = new Map<string, { top: string; score: number }>()
-    for (const [value, weight] of ordered) {
+    for (const candidate of ordered) {
       if (probes >= ACTIVE_ROOT_MAX_PROBES) break
       probes += 1
-      const top = await topOfActivePath(value)
+      const top = await topOfActivePath(candidate.path)
       if (top === undefined) continue
       const topKey = pathKeyOf(top)
       if (topKey === baseKey) continue
       if (!(await isLinkedWorktree(top))) continue
       const entry = scores.get(topKey)
-      if (entry === undefined) scores.set(topKey, { top, score: weight })
-      else entry.score += weight
+      if (entry === undefined) scores.set(topKey, { top, score: candidate.score })
+      else entry.score += candidate.score
     }
     if (scores.size > 0) {
       let best: string | undefined

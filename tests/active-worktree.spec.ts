@@ -1,10 +1,26 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { activeWorktreeRootOf } from '../src/active-worktree.ts'
 import type { Context } from '../src/context-types.ts'
+
+/** Every cwd handed to the plugin's own git probe, in call order. */
+const probed = vi.hoisted(() => [] as string[])
+
+// Records (and delegates to) the real spawn so the case-folding regression is
+// visible on case-insensitive hosts too.
+vi.mock('../src/git.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/git.ts')>()
+  return {
+    ...actual,
+    runGitRaw: (cwd: string, args: string[], timeoutMs?: number) => {
+      probed.push(cwd)
+      return actual.runGitRaw(cwd, args, timeoutMs)
+    },
+  }
+})
 
 const IDENTITY = {
   GIT_AUTHOR_NAME: 'dsh-better-sidebar-test',
@@ -74,6 +90,29 @@ describe('active worktree root', () => {
       initRepo(repo, 'a.txt')
       const ctx = sessionCtx(repo, [{ cwd: join(repo, 'src') }])
       await expect(activeWorktreeRootOf(ctx, 's-no-worktree', repo)).resolves.toBe(realpathSync.native(repo))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('probes the REAL path, never its case-folded identity (Linux is case-sensitive)', async () => {
+    // `addActivePath` keys candidates by a lowercased identity; probing that
+    // KEY instead of the path silently drops every candidate whose path has an
+    // uppercase letter. macOS and Windows fold case and never noticed it —
+    // `Repo-A` / `WorkTree-B` below make the difference visible on every host.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repoA = join(root, 'Repo-A')
+    const repoB = join(root, 'Repo-B')
+    const worktreeB = join(root, 'WorkTree-B')
+    try {
+      initRepo(repoA, 'a.txt')
+      initRepo(repoB, 'b.txt')
+      git(repoB, ['worktree', 'add', '-q', '-b', 'agent', worktreeB])
+      probed.length = 0
+      const ctx = sessionCtx(repoA, [{ cwd: worktreeB, path: join(worktreeB, 'b.txt') }])
+      await expect(activeWorktreeRootOf(ctx, 's-case', repoA)).resolves.toBe(realpathSync.native(worktreeB))
+      expect(probed).toContain(worktreeB)
+      expect(probed).not.toContain(worktreeB.toLowerCase())
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
