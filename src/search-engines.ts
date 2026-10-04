@@ -317,7 +317,16 @@ export function normalizeEnginePaths(lines: readonly string[], separator: string
     // A leading '.\' becomes './' after the separator substitution below;
     // the './' prefix strip then covers both POSIX and Windows output.
     const normalized = trimmed.split(separator).join('/')
-    const clean = normalized.startsWith('./') ? normalized.slice(2) : normalized
+    const bare = normalized.startsWith('./') ? normalized.slice(2) : normalized
+    // fd prints DIRECTORY hits with a trailing separator ('src/util/') while
+    // rg --files reports files only, so the '--type d' run is the one that
+    // carries it. The walk contract has no trailing separator ('src/util'),
+    // and a whole class of consumers compares these rows against walk output
+    // (dir sets, `kept.has(dir)` subsets, the row label), so the canonical
+    // form is enforced HERE — the single point both engines and both runs
+    // pass through. A bare '/' (the root) collapses to '' and is dropped
+    // below, which is the same treatment the walk gives it.
+    const clean = bare.endsWith('/') ? bare.replace(/\/+$/, '') : bare
     if (clean !== '' && clean !== '.') out.push(clean)
   }
   return out

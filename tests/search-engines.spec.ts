@@ -53,6 +53,30 @@ describe('normalizeEnginePaths', () => {
     expect(normalizeEnginePaths(['', '.', 'src/x.ts'])).toEqual(['src/x.ts'])
   })
 
+  // fd prints DIRECTORY hits with a trailing separator. The walk contract has
+  // none, and consumers compare these rows against walk output, so the
+  // canonical form is pinned here — WITHOUT needing a real engine installed
+  // (the Windows lane is the only place fd exists, which is exactly why this
+  // leaked: the assertion that caught it needs `fd` present).
+  it('strips the trailing separator fd prints for directory hits', () => {
+    expect(normalizeEnginePaths(['src/util/', 'web/comp-util/', 'src/util/util-helper.ts'])).toEqual([
+      'src/util',
+      'web/comp-util',
+      'src/util/util-helper.ts',
+    ])
+  })
+
+  it('strips a trailing separator from Windows-shaped directory output too', () => {
+    expect(normalizeEnginePaths(['src\\util\\', '.\\web\\comp-util\\'], '\\')).toEqual([
+      'src/util',
+      'web/comp-util',
+    ])
+  })
+
+  it('drops the bare root that the trailing-separator strip collapses', () => {
+    expect(normalizeEnginePaths(['/', 'src/x.ts'])).toEqual(['src/x.ts'])
+  })
+
   // Windows shape (rg emits '\'-separated paths with a '.\' prefix and CRLF
   // line endings): all of it must still land on the '/'-separated walk contract.
   it('normalizes Windows engine output: backslash separators + .\\ prefix (rg shape)', () => {
