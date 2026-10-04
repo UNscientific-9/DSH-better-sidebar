@@ -504,6 +504,8 @@ export const nl: Record<string, string> = {
   changesRedactBanner: "Geredigeerd",
   pluginAgentPersonaName: 'dsh-agent-persona Persona’s',
   pluginSentinelName: 'dsh-sentinel Weksysteem',
+  pluginFileTraceName: 'dsh-file-trace Bestandstracering',
+  pluginFileTraceDesc: 'Legt elk bestand vast dat het model leest, schrijft of bewerkt; gegroepeerde lijst met inhoud en regeldiffs, Markdown-leesmodus en geheimmaskering; zonder better-sidebar een zelfstandig zwevend venster',
   pluginMnemeName: 'dsh-mneme Geheugenbibliotheek',
   pluginMnemeDesc: 'Geheugenengine tussen sessies: autoDream-consolidatie op de achtergrond, sessiesamenvattingen en gebruikersprofiel; SQLite + handmatig bewerkbare Markdown-spiegels, volledig offline en privé. Registreert een «Geheugenbibliotheek»-tabblad (weergaven geheugen/entiteiten/status/instellingen) wanneer better-sidebar aanwezig is, en behoudt anders een zelfstandig zijbalkpaneel',
   pluginEgoBrowserName: 'ego-browser Agentbrowser',

@@ -506,6 +506,8 @@ export const tr: Record<string, string> = {
   changesRedactBanner: "Maskelendi",
   pluginAgentPersonaName: 'dsh-agent-persona Personalar',
   pluginSentinelName: 'dsh-sentinel Uyandırma sistemi',
+  pluginFileTraceName: 'dsh-file-trace Dosya İzleme',
+  pluginFileTraceDesc: 'Modelin okuduğu, yazdığı veya düzenlediği her dosyayı kaydeder; içerik ve satır bazlı diff ile gruplu liste, Markdown okuma modu ve gizli bilgi maskeleme; better-sidebar yokken bağımsız yüzen pencere',
   pluginMnemeName: 'dsh-mneme Bellek kütüphanesi',
   pluginMnemeDesc: 'Oturumlar arası bellek motoru: autoDream arka plan pekiştirmesi, oturum özetleri ve kullanıcı profili; SQLite + elle düzenlenebilir Markdown aynaları, tamamen çevrimdışı ve özel. better-sidebar varsa «Bellek kütüphanesi» sekmesini kaydeder (bellek/varlık/durum/ayar görünümleri), yoksa bağımsız kenar çubuğu panelini korur',
   pluginEgoBrowserName: 'ego-browser Ajan tarayıcısı',

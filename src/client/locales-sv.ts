@@ -489,6 +489,8 @@ export const sv: Record<string, string> = {
   changesRedactBanner: "Maskerat",
   pluginAgentPersonaName: 'dsh-agent-persona Personor',
   pluginSentinelName: 'dsh-sentinel Väcksystem',
+  pluginFileTraceName: 'dsh-file-trace Filspårning',
+  pluginFileTraceDesc: 'Registrerar varje fil modellen läser, skriver eller redigerar; grupperad lista med innehåll och rad-diffs, Markdown-läsläge och hemlighetsmaskering; utan better-sidebar ett fristående flytande fönster',
   pluginMnemeName: 'dsh-mneme Minnesbibliotek',
   pluginMnemeDesc: 'Minnesmotor mellan sessioner: autoDream-konsolidering i bakgrunden, sessionsammanfattningar och användarprofil; SQLite + manuellt redigerbara Markdown-speglingar, helt offline och privat. Registrerar en «Minnesbibliotek»-flik (vyer minne/entiteter/status/inställningar) när better-sidebar finns, annars behålls den fristående sidopanelen',
   pluginEgoBrowserName: 'ego-browser Agentwebbläsare',

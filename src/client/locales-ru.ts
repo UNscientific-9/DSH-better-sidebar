@@ -504,6 +504,8 @@ export const ru: Record<string, string> = {
   changesRedactBanner: "Замаскировано",
   pluginAgentPersonaName: 'dsh-agent-persona Персоны',
   pluginSentinelName: 'dsh-sentinel Система пробуждения',
+  pluginFileTraceName: 'dsh-file-trace Отслеживание файлов',
+  pluginFileTraceDesc: 'Записывает каждый файл, который модель читает, записывает или изменяет; сгруппированный список с содержимым и построчными diff, режим чтения Markdown и маскирование секретов; без better-sidebar — отдельное плавающее окно',
   pluginMnemeName: 'dsh-mneme Библиотека памяти',
   pluginMnemeDesc: 'Движок памяти между сессиями: фоновая консолидация autoDream, сводки сессий и профиль пользователя; SQLite + редактируемые вручную зеркала Markdown, полностью офлайн и приватно. Регистрирует вкладку «Библиотека памяти» (виды: память/сущности/статус/настройки) при наличии better-sidebar, иначе сохраняет отдельную панель в боковой панели',
   pluginEgoBrowserName: 'ego-browser Браузер агента',
