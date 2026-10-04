@@ -334,6 +334,8 @@ export const ja: Record<string, string> = {
   sideChatThreads: 'スレッド切替 / 新規',
   sideChatSave: '新規会話として保存',
   sideChatSaveTitle: 'このスレッドをトップレベルの会話に昇格、メイン会話リストに表示',
+  sideChatArchive: 'このサイド会話をアーカイブ（セッションリストの「アーカイブを表示」から再表示できます）',
+  sideChatArchiveRunning: 'このスレッドは実行中です — 停止してからアーカイブしてください',
   sideChatSaved: '新規会話として保存しました',
   sideChatNoTurn: '最初のターンを完了してから保存可能',
   sideChatPendingDrop: '最後の未回答フォローアップは保存される会話に含まれません',

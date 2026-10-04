@@ -332,6 +332,8 @@ export const nl: Record<string, string> = {
   sideChatThreads: 'Thread wisselen / nieuw',
   sideChatSave: 'Opslaan als nieuwe sessie',
   sideChatSaveTitle: 'Promoveer deze thread naar een top-level sessie in de hoofd-sessielijst',
+  sideChatArchive: 'Dit zijgesprek archiveren (terug te vinden via “Gearchiveerd tonen” in de sessielijst)',
+  sideChatArchiveRunning: 'Deze thread draait — stop hem voordat je archiveert',
   sideChatSaved: 'Opgeslagen als een nieuwe sessie',
   sideChatNoTurn: 'Opslaan is pas beschikbaar na de eerste voltooide beurt',
   sideChatPendingDrop: 'De laatste onbeantwoorde follow-up wordt niet meegenomen in de opgeslagen sessie',

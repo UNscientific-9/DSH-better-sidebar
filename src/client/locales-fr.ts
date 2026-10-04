@@ -327,6 +327,8 @@ export const fr: Record<string, string> = {
   sideChatThreads: 'Changer de fil / nouveau',
   sideChatSave: 'Enregistrer comme nouvelle session',
   sideChatSaveTitle: 'Promouvoir ce fil en session de premier niveau, visible dans la liste des sessions principales',
+  sideChatArchive: 'Archiver cette conversation latérale (la retrouver via « Afficher les archivées » dans la liste des sessions)',
+  sideChatArchiveRunning: 'Ce fil est en cours d’exécution — arrêtez-le avant de l’archiver',
   sideChatSaved: 'Enregistré comme nouvelle session',
   sideChatNoTurn: 'Au moins un tour de discussion doit être terminé avant l’enregistrement',
   sideChatPendingDrop: 'La dernière relance inachevée ne sera pas incluse dans la nouvelle session',
