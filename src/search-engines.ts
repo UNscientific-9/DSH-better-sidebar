@@ -22,7 +22,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { dirname, join, sep } from 'node:path'
+import { join, posix, sep, win32 } from 'node:path'
 import { homedir } from 'node:os'
 import { debugLog } from './search-debug.ts'
 
@@ -70,6 +70,10 @@ const PATH_SEPARATOR = process.platform === 'win32' ? ';' : ':'
  * (verified: the candidate resolves to the bundled rg on macOS).
  * Wrong guesses are cheap: every candidate goes through verify() and
  * unusable ones are dropped.
+ *
+ * Pure in `platform`: every path below is built with that platform's
+ * `node:path` dialect (see `P` in the body), so the returned shape depends
+ * only on the arguments — never on the OS running the probe.
  */
 export function bundledRgCandidates(
   platform: NodeJS.Platform,
@@ -81,6 +85,16 @@ export function bundledRgCandidates(
 ): string[] {
   const binName = platform === 'win32' ? 'rg.exe' : 'rg'
   const platformPkg = `@vscode/ripgrep-${platform}-${arch}`
+  // Everything below is derived from the PLATFORM ARGUMENT, so it must use
+  // that platform's path dialect — never the host's. A host `sep`/`dirname`
+  // makes this function a different function on every OS: on a Windows host
+  // the `endsWith(sep + 'node_modules')` test below never matched a POSIX
+  // start path, so the whole argv[1] walk produced nothing and the win32 /
+  // darwin shapes could not be pinned from a non-Windows machine (the Windows
+  // CI failure this fixes). With the dialect selected here the shape derived
+  // from those arguments is the same everywhere: 'darwin' always yields
+  // '/'-joined candidates, 'win32' always yields '\'-joined ones.
+  const P = platform === 'win32' ? win32 : posix
   const roots: string[] = []
   const addRoot = (root: string): void => {
     if (root !== '' && !roots.includes(root)) roots.push(root)
@@ -92,10 +106,10 @@ export function bundledRgCandidates(
   // executable itself lives elsewhere (Homebrew node + a bundled tree).
   const walkRoots = (start: string): void => {
     if (start === '') return
-    let current = dirname(start)
-    while (current !== dirname(current)) {
-      if (current.endsWith(`${sep}node_modules`)) addRoot(current)
-      current = dirname(current)
+    let current = P.dirname(start)
+    while (current !== P.dirname(current)) {
+      if (current.endsWith(`${P.sep}node_modules`)) addRoot(current)
+      current = P.dirname(current)
     }
   }
   if (modulePath !== undefined && modulePath !== '') walkRoots(modulePath)
@@ -105,24 +119,24 @@ export function bundledRgCandidates(
   // %APPDATA%\npm\node_modules (nvm-windows keeps the same %APPDATA%\npm).
   if (platform === 'win32') {
     if (env.APPDATA !== undefined && env.APPDATA !== '') {
-      addRoot(join(env.APPDATA, 'npm', 'node_modules'))
+      addRoot(P.join(env.APPDATA, 'npm', 'node_modules'))
     }
   } else {
-    addRoot(join(dirname(dirname(execPath)), 'lib', 'node_modules'))
+    addRoot(P.join(P.dirname(P.dirname(execPath)), 'lib', 'node_modules'))
     // Homebrew and pnpm global layouts missed by the execPath derivation.
     addRoot('/opt/homebrew/lib/node_modules')
     addRoot('/usr/local/lib/node_modules')
   }
   // The DSH profile layout: plugins and the host CLI share one tree.
-  addRoot(join(home, '.dsh', 'profiles', 'node_modules'))
+  addRoot(P.join(home, '.dsh', 'profiles', 'node_modules'))
   const candidates: string[] = []
   const seen = new Set<string>()
   for (const root of roots) {
     for (const candidate of [
-      join(root, platformPkg, 'bin', binName),
+      P.join(root, platformPkg, 'bin', binName),
       // A dependency tree that did NOT hoist (pnpm's strict layout, npm with
       // a conflicting top-level @vscode/ripgrep).
-      join(root, '@deepseek-ai', 'dsh', 'node_modules', platformPkg, 'bin', binName),
+      P.join(root, '@deepseek-ai', 'dsh', 'node_modules', platformPkg, 'bin', binName),
     ]) {
       if (!seen.has(candidate)) {
         seen.add(candidate)
