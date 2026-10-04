@@ -30,6 +30,7 @@ import {
   ConnectionIndicator,
   DiffBlock,
   IconApiOutlineRegular,
+  IconArchiveOutlineRegular,
   IconBrowseOutlineRegular,
   IconChevronRightOutlineRegular,
   IconEditOutlineRegular,
@@ -131,6 +132,56 @@ interface RowLabels {
   terminal: TerminalBlockLabels
   diff: DiffBlockLabels
   read: ReadBlockLabels
+}
+
+/** The host services this view reaches for archiving. Neither face lives on
+ *  the plugin's own context type — `workspaces` is the session-list service and
+ *  `uiWorkspace` the session surface — so they are read through the same
+ *  structural probe the other views use for host services. */
+interface ArchivedSessionsFace {
+  list?: {
+    getSnapshot?: () => { archivedSessionIds?: readonly string[] }
+    subscribe?: (callback: () => void) => () => void
+  }
+}
+
+interface ArchiveSessionFace {
+  archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>
+}
+
+/** A stable "nothing is archived" snapshot: the archive set feeds
+ *  `useSyncExternalStore`, and a fresh `[]` per read would re-render forever. */
+const NO_ARCHIVED_SESSIONS: readonly string[] = []
+
+/** The sessions the host currently hides as archived. A host without the
+ *  `workspaces` service (or a context that throws on `get`) reads as "nothing
+ *  is archived", so the thread menu simply keeps every thread. */
+function archivedSessionIdsOf(ctx: Context): readonly string[] {
+  try {
+    const service = ctx.get('workspaces') as unknown as ArchivedSessionsFace | undefined
+    return service?.list?.getSnapshot?.()?.archivedSessionIds ?? NO_ARCHIVED_SESSIONS
+  } catch {
+    return NO_ARCHIVED_SESSIONS
+  }
+}
+
+/** Subscribe to the host's archive set. DSH hides archived sessions from the
+ *  session list, so the thread menu has to follow the same set — otherwise it
+ *  would keep offering a thread the host refuses to open. */
+function useArchivedSessionIds(ctx: Context): readonly string[] {
+  const subscribe = useMemo(
+    () => (callback: () => void) => {
+      try {
+        const service = ctx.get('workspaces') as unknown as ArchivedSessionsFace | undefined
+        return service?.list?.subscribe?.(callback) ?? (() => {})
+      } catch {
+        return () => {}
+      }
+    },
+    [ctx],
+  )
+  const getSnapshot = useCallback(() => archivedSessionIdsOf(ctx), [ctx])
+  return useSyncExternalStore(subscribe, getSnapshot)
 }
 
 /** Merge history entries by event seq (newest wins), log order preserved. */
@@ -386,17 +437,21 @@ export function SideChatView(props: {
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
     useCallback(() => ctx.sessions.list.getSnapshot(), [ctx]),
   )
-  const threads = useMemo(
-    () => sideThreadRows(list.byId, scope.sessionId),
-    [list, scope.sessionId],
-  )
+  // Archived threads are dropped from the menu (and from the switch targets):
+  // the host hides archived sessions itself, and binding a tab to one would
+  // strand the panel on a session it refuses to open.
+  const archivedIds = useArchivedSessionIds(ctx)
+  const threads = useMemo(() => {
+    const archived = new Set(archivedIds)
+    return sideThreadRows(list.byId, scope.sessionId).filter(row => !archived.has(row.id))
+  }, [list, scope.sessionId, archivedIds])
 
   // The thread this tab is bound to rides tab.meta (refresh-restored).
   const threadId = sidechatThreadIdOf(tab)
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
 
   const [composer, setComposer] = useState('')
-  const [busy, setBusy] = useState<'starting' | 'sending' | 'saving' | null>(null)
+  const [busy, setBusy] = useState<'starting' | 'sending' | 'saving' | 'archiving' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [revision, setRevision] = useState(0)
@@ -661,6 +716,21 @@ export function SideChatView(props: {
     }
   }
 
+  /** The thread that should replace `excludeId` once it is archived: the newest
+   *  real thread first (the host's own subagent catalog carries the creation
+   *  order), the newest placeholder only when nothing else is left, and
+   *  `undefined` when the thread menu is empty — the tab then unbinds to the
+   *  empty state instead of staying bound to an archived session. */
+  const fallbackThreadId = useCallback((excludeId: string): string | undefined => {
+    const candidates = threads.filter(row => row.id !== excludeId)
+    const catalog = list.projectionsBySession?.[scope.sessionId]?.values.subagentCatalog
+    const rank = (id: string): number => catalog?.find(entry => entry.id === id)?.createdAt ?? 0
+    const real = candidates.filter(row => row.title !== SIDE_NEW_THREAD_TITLE)
+    const pool = real.length > 0 ? real : candidates
+    if (pool.length === 0) return undefined
+    return pool.reduce((newest, row) => (rank(row.id) > rank(newest.id) ? row : newest)).id
+  }, [list, scope.sessionId, threads])
+
   const handleSave = async (): Promise<void> => {
     if (threadId === undefined || !canSave || busy !== null) return
     setBusy('saving')
@@ -679,6 +749,29 @@ export function SideChatView(props: {
       }
       ctx.sessions.open?.(newId)
       setSaved(true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  /** Archive the bound thread on the host (the same capability the session
+   *  list's own archive action uses; `stopActivity` settles a running agent
+   *  first). The tab then moves to another live thread: leaving it bound to an
+   *  archived session would dead-end the panel, because the host refuses to
+   *  open archived sessions. */
+  const handleArchive = async (): Promise<void> => {
+    if (threadId === undefined || busy !== null) return
+    setBusy('archiving')
+    setError(null)
+    setSaved(false)
+    try {
+      const service = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+      if (service?.archiveSession === undefined) throw new Error('the workspace service is unavailable')
+      await service.archiveSession(threadId, { stopActivity: true })
+      const next = fallbackThreadId(threadId)
+      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: next === undefined ? {} : { threadId: next } })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -751,6 +844,16 @@ export function SideChatView(props: {
           title={`${t('sideChatSave')} — ${t('sideChatSaveTitle')}`}
         >
           <IconSaveOutline16 />
+        </button>
+        <button
+          type="button"
+          className={css.sidechatIconBtn}
+          onClick={() => void handleArchive()}
+          disabled={running || busy !== null}
+          title={running ? t('sideChatArchiveRunning') : t('sideChatArchive')}
+          aria-label={t('sideChatArchive')}
+        >
+          <IconArchiveOutlineRegular size={16} />
         </button>
       </div>
       {connectionState !== undefined && connectionState !== 'connected' && (

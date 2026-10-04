@@ -320,6 +320,8 @@ export const de: Record<string, string> = {
   sideChatThreads: 'Thread wechseln / neu',
   sideChatSave: 'Als neue Sitzung speichern',
   sideChatSaveTitle: 'Diesen Thread in der Hauptsitzungsliste zu einer Top-Level-Sitzung erheben',
+  sideChatArchive: 'Diese Nebenunterhaltung archivieren (über „Archivierte anzeigen“ in der Sitzungsliste wiederzufinden)',
+  sideChatArchiveRunning: 'Dieser Thread läuft — vor dem Archivieren stoppen',
   sideChatSaved: 'Als neue Sitzung gespeichert',
   sideChatNoTurn: 'Das Speichern ist nach der ersten abgeschlossenen Runde verfügbar',
   sideChatPendingDrop: 'Die letzte unbeantwortete Nachfrage wird in der gespeicherten Sitzung nicht enthalten sein',
