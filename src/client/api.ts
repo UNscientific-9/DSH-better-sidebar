@@ -385,6 +385,14 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  /** Push the selected checkout's branch to its upstream; git's own failure
+   *  message (no upstream, auth, non-fast-forward) crosses the wire as-is. */
+  gitPush: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.push', gitPayload(scope, worktree, {})),
+  /** Pull into the selected checkout (`--ff-only` host-side: a diverged branch
+   *  fails loudly rather than opening a merge editor nobody can answer). */
+  gitPull: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.pull', gitPayload(scope, worktree, {})),
   /** Ask the host to generate a commit message from the pending changes: it
    *  streams the diff through the harness LLM on the pinned route (or the
    *  conversation's own) and answers with the route actually used.

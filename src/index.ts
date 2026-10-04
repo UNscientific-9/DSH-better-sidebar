@@ -697,6 +697,20 @@ function buildApi(
       await git.commit(cwd, message, selectedRepoOf(payload))
       return { ok: true }
     },
+    // Ship a commit without leaving the panel. Both target the selected
+    // checkout through gitCwdOf/selectedRepoOf like every other git route, and
+    // both report git's own stderr: a missing upstream (push) or a diverged
+    // branch (pull is --ff-only) is the user's to resolve in a terminal.
+    'git.push': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.push(cwd, selectedRepoOf(payload))
+      return { ok: true }
+    },
+    'git.pull': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.pull(cwd, selectedRepoOf(payload))
+      return { ok: true }
+    },
     'git.branch': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       return git.branches(cwd, selectedRepoOf(payload))
