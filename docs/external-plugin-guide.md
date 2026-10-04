@@ -2,7 +2,7 @@
 
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
-> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**。当前版本 **v0.24.0**（peer 下限 `^0.2.0-rc.1`，仅支持 DSH **0.2.0-rc.1+**；0.1.7 线请用 v0.23.0——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
+> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；路由前缀安全解析（`hostRouteUrl`）**v0.25.0+**。当前版本 **v0.24.0**（peer 下限 `^0.2.0-rc.1`，仅支持 DSH **0.2.0-rc.1+**；0.1.7 线请用 v0.23.0——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 5 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
@@ -597,13 +597,16 @@ ctx.effect(() =>
 
 ```ts
 // POST /sidebar/api/<method>，body 带 sessionId + cwd（可选）
-const res = await fetch('/sidebar/api/fs.read', {
+// 路由经 ctx.betterSidebar.hostRouteUrl() 解析（v0.25.0+）：不要写前导斜杠
+const res = await fetch(ctx.betterSidebar.hostRouteUrl('sidebar/api/fs.read'), {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ sessionId: scope.sessionId, path }),
 })
 const { value } = await res.json()   // 错误时 { ok: false, error: { code, message } }
 ```
+
+> **绝不写前导斜杠**（v0.25.0+，issue #753）：`fetch('/sidebar/api/…')` 与 `new URL('/sidebar/ws/…', base)` 会把请求钉在**源站根**。反代把 GUI 挂在子路径时（如 `https://host/dataops/proxy/3080/`），请求会甩掉前缀 → JSON API 404、懒加载 chunk 加载不出来、媒体/HTML 预览空白、WebSocket 1006；桌面壳下 `dsh-app://app/` 更是直接不可达。`hostRouteUrl()` 用宿主同款的传输基底（壳注入的 `__DSH_TRANSPORT__.streamBaseUrl` 优先，回落 `document.baseURI`）解析相对路径，并把前缀原样保留；`features` 含 `'hostRouteUrl'` 时可用，旧版本回退到自查 `document.baseURI`（但拿不到桌面壳的真实基底）。你自己的 HTTP/WS 路由同理：一律**相对路径 + 页面前缀**。
 
 常用方法（完整清单见 `src/client/api.ts`）：
 
@@ -625,21 +628,24 @@ const { value } = await res.json()   // 错误时 { ok: false, error: { code, me
 把若干文件/目录打成 ZIP 下载，并且**有进度可看**：选择项在 `archive.build` 里一次性收集（与 `fs.tree` 同一套词法解析——**无包含检查**，目录递归、符号链接跳过、同名条目用父目录消歧），打包在后台进行，客户端轮询进度、完成后取字节。
 
 ```ts
+// 路由助手同 §6：相对路径交给 hostRouteUrl，别写前导斜杠
+const route = (path: string): string => ctx.betterSidebar.hostRouteUrl(path)
+
 // 1) 启动：paths 是会话命名空间里的绝对路径（与 fs.tree 的行 path 同形）
-const build = await fetch('/sidebar/api/archive.build', {
+const build = await fetch(route('sidebar/api/archive.build'), {
   method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ sessionId, cwd, paths: ['/w/src', '/w/notes.md'], name: '报告.zip' }),
 }).then(r => r.json())
 // → { ok: true, value: { id: 'ar-…', entries: 5 } }
 
 // 2) 轮询：state 为 building | ready | error；done/total 是条目进度，bytes 是已读未压缩字节
-const status = await fetch('/sidebar/api/archive.status', {
+const status = await fetch(route('sidebar/api/archive.status'), {
   method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ id: build.value.id, sessionId }),
 }).then(r => r.json())
 
 // 3) 下载（仅 ready 时）：同一 id 只能取一次，取完即释放
-const url = `/sidebar/archive?${new URLSearchParams({ sessionId, id: build.value.id })}`
+const url = route(`sidebar/archive?${new URLSearchParams({ sessionId, id: build.value.id })}`)
 ```
 
 约束与状态码：任务表最多 **4 个并发构建**（超出时 `archive.build` 回 `bad-request`，HTTP 409），完成/失败后保留 **5 分钟**（过期即消失）；`id` 只对**创建它的 session** 可用（其他 session 读是 `forbidden` 403）；`/sidebar/archive` 在构建中回 **409**、构建失败回 **410**（消息即失败原因）、未知/过期/已下载回 **404**。响应头为 `content-type: application/zip` + `content-disposition: attachment; filename="<ASCII 回退>"; filename*=UTF-8''<百分号编码>`（非 latin1 文件名走 RFC 5987，ASCII 档位对旧客户端生效）。上限沿用 `src/zip.ts` 的 `ZIP_MAX_ENTRIES = 10_000` 与 `ZIP_MAX_BYTES = 256 MiB`（未压缩总量）。
@@ -648,10 +654,12 @@ const url = `/sidebar/archive?${new URLSearchParams({ sessionId, id: build.value
 
 ```ts
 // 媒体 URL（图片等直接 <img src>）：/sidebar/file?sessionId=...&path=...
-const url = `/sidebar/file?${new URLSearchParams({ sessionId: scope.sessionId, path })}`
+const url = ctx.betterSidebar.hostRouteUrl(
+  `sidebar/file?${new URLSearchParams({ sessionId: scope.sessionId, path })}`
+)
 ```
 
-> 注：内置的 `api.ts` 是 better-sidebar 内部模块，外部插件 **不要** value-import 它（构建纯度门会挡）；按上表模式自己 fetch 即可。所有路由带与 `/api` 相同的 Host 头信任围栏，浏览器同源访问天然通过。
+> 注：内置的 `api.ts` 是 better-sidebar 内部模块，外部插件 **不要** value-import 它（构建纯度门会挡）；按上表模式自己 fetch 即可，路由一律经 `hostRouteUrl()`（或等价的「相对路径 + 页面前缀」解析）。所有路由带与 `/api` 相同的 Host 头信任围栏，浏览器同源访问天然通过。
 
 ---
 
@@ -730,7 +738,8 @@ interface BetterSidebarService {
   /** 能力清单（只增不删，唯一例外：v0.19.0 删除了 'floatWindows'）：
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
-   *  'settingSelect' | 'fileIcons' | 'rightActions' | 'settingPatterns'
+   *  'settingSelect' | 'fileIcons' | 'rightActions' | 'settingPatterns' |
+   *  'hostRouteUrl'
    *  ——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
@@ -751,6 +760,11 @@ interface BetterSidebarService {
    *  注意：path 派生 id 只对 openFile/openSidebarFile 成立；editorExplorer 合并模式的
    *  原地切换经 updateTab 重写 path/title，tab id 保持稳定、不再对应 path。 */
   openFile(scope: SessionScope, path: string, title?: string): void
+  /** 把插件自有 host 路由（如 `'sidebar/api/fs.read'`）解析成绝对 URL，
+   *  保留反代子路径前缀（v0.25.0+，features 含 'hostRouteUrl'）。前导斜杠会被
+   *  去掉——带着它就会甩掉前缀、钉到源站根；桌面壳的真实基底也由它给出。
+   *  详见 §6 的前缀安全说明。 */
+  hostRouteUrl(path: string): string
 }
 
 /** openTab 的 seed（v0.12.0 起导出命名类型）。 */
@@ -1099,7 +1113,7 @@ interface SettingsDescriptor {
 }
 ```
 
-**`my-plugin/src/client/index.tsx`**（CSV viewer 的 `custom` load 直取 `/sidebar/api/fs.read`，注意响应 envelope 是 `{ value }`）：
+**`my-plugin/src/client/index.tsx`**（CSV viewer 的 `custom` load 直取 `/sidebar/api/fs.read`，注意响应 envelope 是 `{ value }`，且路由经 `hostRouteUrl()` 解析——见 §6 的前导斜杠禁忌）：
 
 ```tsx
 import { createElement } from 'react'
@@ -1127,7 +1141,7 @@ export function apply(ctx: Context): void {
       exts: ['csv'],
       fetchStrategy: 'custom',
       load: async (path, scope) => {
-        const res = await fetch('/sidebar/api/fs.read', {
+        const res = await fetch(ctx.betterSidebar.hostRouteUrl('sidebar/api/fs.read'), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ sessionId: scope.sessionId, path }),
