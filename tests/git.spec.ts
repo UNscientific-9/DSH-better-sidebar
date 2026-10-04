@@ -1,12 +1,12 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
-import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
+import { checkout, parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
 
 const execFileAsync = promisify(execFile)
 const normalizePath = (path: string): string => path.replaceAll('\\', '/')
@@ -264,5 +264,37 @@ describe('git parsing', () => {
   it('parses an empty or junk diff into no files', () => {
     expect(parseUnifiedDiff('').files).toEqual([])
     expect(parseUnifiedDiff('no diff here\n').files).toEqual([])
+  })
+
+  it('never lets a branch operand reach git as an option (checkout)', async () => {
+    // A caller-supplied branch name went into argv as a bare operand, so `-f`
+    // was parsed as git's OPTION and force-discarded the worktree changes
+    // (`--work-tree=…` redirected the checkout). The sentinel ends option
+    // parsing — the same guard 4100e16 added to show / commitDiff / revert /
+    // cherryPick, which missed this call.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-checkout-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'test'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'committed\n')
+      execFileSync('git', ['add', 'a.txt'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root })
+      execFileSync('git', ['branch', 'other'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'UNSAVED WORK\n')
+
+      await expect(checkout(root, '-f')).rejects.toThrow()
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('UNSAVED WORK\n')
+
+      await expect(checkout(root, '--work-tree=/elsewhere')).rejects.toThrow()
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('UNSAVED WORK\n')
+
+      // The guard must not break the real operation.
+      await checkout(root, 'other')
+      expect(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim())
+        .toBe('other')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
