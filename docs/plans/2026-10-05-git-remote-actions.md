@@ -55,6 +55,12 @@ Push/Pull 的 4 个键（`push` / `pull` / `pushError` / `pullError`）沿用上
   `git.suggest-message` 路由用例随被删的实现一并移除（它们钉的是 `requestHeader()` 与
   200 token 预算，属已不存在的契约）；#642 的实现由它自己的 `tests/commit-message.spec.ts`
   （纯逻辑）、`tests/git-suggest.spec.tsx`（UI）、`tests/commit-model-settings.spec.tsx` 覆盖。
+- `tests/git-suggest-route.spec.ts`（16 例，宿主半区，真 git + 假 `ctx.llm` / 假会话 / 假设置）：
+  补上被上面那条删除留下的**路由层**缺口——三级模型回退链（固定 → 会话自身 → `agentDefaultModel`）
+  与「全都拿不到」的可辨识 503、提示词组装与 `truncateDiff` 截断标记、512 token / 最低
+  reasoningEffort / 30s 超时确实进了 `llm.stream` 入参、`{message, provider, model}` 返回形状与
+  trim、llm 失败与「无可用模型」可区分的错误映射，以及「除读 diff 外零 git 调用」的安全不变式
+  （在 `spawn` 进程边界上断言，并在仓库状态上复核索引未被动过）。
 - `tests/git-remote-actions-ui.spec.tsx`（1 例，jsdom）：Push/Pull 的调用参数（选中的检出）
   与失败落在提交栏那一条状态行上。
 
