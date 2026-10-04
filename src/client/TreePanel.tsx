@@ -74,6 +74,10 @@ export function TreePanel(props: {
    *  through to FileTree). */
   openWithShowPluginTargets?: boolean
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** The explorerExclude pref patterns: the host filters the tree listing AND
+   *  the name search with them (passed through to FileTree, and carried on the
+   *  search request so both surfaces agree). */
+  exclude?: readonly string[]
   /** A tree rename landed (passed through to FileTree for tab retargeting). */
   onPathRenamed?: (oldPath: string, newPath: string) => void
   /** A tree delete landed (passed through to FileTree for tab closing). */
@@ -90,7 +94,7 @@ export function TreePanel(props: {
   const {
     sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide,
     openInApp, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin,
-    openWithShowPluginTargets,
+    openWithShowPluginTargets, exclude,
     onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
   const [query, setQuery] = useState('')
@@ -172,6 +176,12 @@ export function TreePanel(props: {
 
   const needle = query.trim()
   const searching = needle !== ''
+  // The search effect below must re-run on a CHANGED list, never on a churned
+  // array identity: the prefs store hands out one stable reference per
+  // document, but keying on the value is what makes that a guarantee rather
+  // than an assumption (a re-run resets the 300ms debounce, so a per-render
+  // identity would keep the search from ever settling).
+  const excludeKey = (exclude ?? []).join('\0')
   useEffect(() => {
     if (needle === '') {
       setResults(null)
@@ -179,8 +189,9 @@ export function TreePanel(props: {
       return
     }
     const controller = new AbortController()
+    const patterns = excludeKey === '' ? undefined : excludeKey.split('\0')
     const timer = window.setTimeout(() => {
-      api.fsSearch({ sessionId, cwd }, needle, controller.signal).then((found) => {
+      api.fsSearch({ sessionId, cwd }, needle, patterns, controller.signal).then((found) => {
         setResults(found)
         setError(null)
       }).catch((failure: unknown) => {
@@ -193,7 +204,7 @@ export function TreePanel(props: {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle])
+  }, [sessionId, cwd, needle, excludeKey])
 
   const busy = upload !== null
   /** Directory hits (the host reports them separately): a click navigates the
@@ -327,6 +338,7 @@ export function TreePanel(props: {
         onOpenWith={onOpenWith}
         onToggleOpenWithPin={onToggleOpenWithPin}
         openWithShowPluginTargets={openWithShowPluginTargets}
+        exclude={exclude}
         onReferenceFile={onReferenceFile}
         onPathRenamed={onPathRenamed}
         onPathDeleted={onPathDeleted}
