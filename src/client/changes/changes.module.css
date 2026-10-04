@@ -210,6 +210,33 @@
 .commitRow { display: flex; align-items: center; gap: 6px; }
 .commitInput { flex: 1; min-width: 0; }
 
+/* Push / Pull: the two remote actions sit at the foot of the commit bar, so a
+   commit can be shipped without leaving the panel. */
+.commitRemoteRow { display: flex; align-items: center; gap: 6px; }
+
+/* The inline spinner the suggest button swaps in while the host streams a
+   message: same 14px footprint as the sparkle it replaces, so the row's layout
+   does not shift mid-generation. */
+.suggestSpinner {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-label-primary);
+  border-radius: 50%;
+  animation: dsh-suggest-spin 800ms linear infinite;
+}
+
+@keyframes dsh-suggest-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Respect a reduced-motion preference: the button still shows its busy state
+   (the spinner replaces the icon), it just stops rotating. */
+@media (prefers-reduced-motion: reduce) {
+  .suggestSpinner { animation: none; }
+}
+
 /* ── History ───────────────────────────────────────────────────────────── */
 
 /* A history row: line 1 = short-hash badge + subject, line 2 = ref pills +

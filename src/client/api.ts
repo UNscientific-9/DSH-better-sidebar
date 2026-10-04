@@ -340,6 +340,19 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  /** Push the selected checkout's branch to its upstream; git's own failure
+   *  message (no upstream, auth, non-fast-forward) crosses the wire as-is. */
+  gitPush: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.push', gitPayload(scope, worktree, {})),
+  /** Pull into the selected checkout (`--ff-only` host-side: a diverged branch
+   *  fails loudly rather than opening a merge editor nobody can answer). */
+  gitPull: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.pull', gitPayload(scope, worktree, {})),
+  /** Ask the host to write a commit message from the pending changes (it
+   *  streams the diff through the conversation's own LLM route).
+   *  `language` follows the sidebar's active locale ('zh' | 'en'). */
+  gitSuggestMessage: (scope: SessionScope, language: 'zh' | 'en', worktree?: string, signal?: AbortSignal) =>
+    call<{ message: string }>('git.suggest-message', gitPayload(scope, worktree, { language }), signal),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
