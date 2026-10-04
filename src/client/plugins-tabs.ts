@@ -108,13 +108,6 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-git-forge@1.0.0',
   },
   {
-    id: 'dsh-git-remotes',
-    name: () => t('pluginGitRemotesName'),
-    url: 'https://github.com/yq04/dsh-git-remotes',
-    description: () => t('pluginGitRemotesDesc'),
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-git-remotes.git',
-  },
-  {
     id: 'dsh-github-workbench',
     name: () => t('pluginGithubWorkbenchName'),
     url: 'https://github.com/meyaomiao/dsh-github-workbench',
@@ -202,14 +195,6 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // Peer-depends on dsh-better-sidebar (SSH Tunnel tab + center terminal/SFTP).
     // Install the prerequisite first; the package is published on npm as dsh-ssh-tunnel.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-ssh-tunnel@1.0.0',
-  },
-  {
-    id: 'dsh-turn-review',
-    name: () => t('pluginTurnReviewName'),
-    url: 'https://github.com/yq04/dsh-turn-review',
-    description: () => t('pluginTurnReviewDesc'),
-    // Needs dsh-better-sidebar (optional peer) for the tab; no model tools.
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-turn-review.git',
   },
   {
     id: 'dsh-bilingual-reader',
