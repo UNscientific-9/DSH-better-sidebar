@@ -194,32 +194,59 @@ describe('host plugin smoke', () => {
 })
 
 /**
+ * Scratch-repository harness shared by the git tests. The fixture's commit
+ * identity comes from the GIT_AUTHOR / GIT_COMMITTER environment variables,
+ * confined to the fixture process: no git config is touched anywhere (the
+ * plugin never sets an identity, and neither does its test fixture).
+ */
+const FIXTURE_IDENTITY = {
+  GIT_AUTHOR_NAME: 'dsh-better-sidebar-test',
+  GIT_AUTHOR_EMAIL: 'test@dsh.invalid',
+  GIT_COMMITTER_NAME: 'dsh-better-sidebar-test',
+  GIT_COMMITTER_EMAIL: 'test@dsh.invalid',
+}
+
+/** Run one git command inside a fixture repository (throws on a non-zero exit). */
+const gitRun = (cwd: string, args: string[]): string => {
+  const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...FIXTURE_IDENTITY },
+  })
+  if (result.status !== 0) {
+    throw new Error(result.stderr || `git ${args[0] ?? ''} exited with ${String(result.status)}`)
+  }
+  return result.stdout
+}
+
+/**
+ * A fresh repo on branch `main` holding the SAME file name at two levels:
+ * `README.md` and `pkg/README.md`, committed at `root-v1` / `pkg-v1` and then
+ * dirtied to `root-DIRTY` / `pkg-DIRTY`. This is the #765 collision — a
+ * session whose cwd is `<repo>/pkg` sends the repository-root-relative status
+ * path `README.md`, which also names a file one level below it.
+ */
+const makeNestedScratchRepo = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-nested-'))
+  gitRun(dir, ['init', '-q'])
+  // The same eol pin `makeScratchRepo` documents: the content assertions in
+  // the nested-cwd tests are byte-exact too.
+  gitRun(dir, ['config', 'core.autocrlf', 'false'])
+  gitRun(dir, ['checkout', '-q', '-b', 'main'])
+  writeFileSync(join(dir, 'README.md'), 'root-v1\n')
+  mkdirSync(join(dir, 'pkg'))
+  writeFileSync(join(dir, 'pkg', 'README.md'), 'pkg-v1\n')
+  gitRun(dir, ['add', '-A'])
+  gitRun(dir, ['commit', '-q', '-m', 'base'])
+  writeFileSync(join(dir, 'README.md'), 'root-DIRTY\n')
+  writeFileSync(join(dir, 'pkg', 'README.md'), 'pkg-DIRTY\n')
+  return dir
+}
+
+/**
  * Destructive git operations (discard / revert / cherry-pick) run against a
- * throwaway repository under the OS temp dir — never the plugin repo. The
- * fixture's commit identity comes from the GIT_AUTHOR / GIT_COMMITTER
- * environment variables, confined to the fixture process: no git config is
- * touched anywhere (the plugin never sets an identity, and neither does its
- * test fixture).
+ * throwaway repository under the OS temp dir — never the plugin repo.
  */
 describe('git destructive operations (scratch repository)', () => {
-  const FIXTURE_IDENTITY = {
-    GIT_AUTHOR_NAME: 'dsh-better-sidebar-test',
-    GIT_AUTHOR_EMAIL: 'test@dsh.invalid',
-    GIT_COMMITTER_NAME: 'dsh-better-sidebar-test',
-    GIT_COMMITTER_EMAIL: 'test@dsh.invalid',
-  }
-
-  const gitRun = (cwd: string, args: string[]): string => {
-    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args], {
-      encoding: 'utf8',
-      env: { ...process.env, ...FIXTURE_IDENTITY },
-    })
-    if (result.status !== 0) {
-      throw new Error(result.stderr || `git ${args[0] ?? ''} exited with ${String(result.status)}`)
-    }
-    return result.stdout
-  }
-
   /** A fresh repo on branch `main` with one committed file `a.txt`. */
   const makeScratchRepo = (): string => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-'))
@@ -254,6 +281,30 @@ describe('git destructive operations (scratch repository)', () => {
       const staged = await git.diff(dir, 'a.txt', true)
       expect(staged).toContain('-two')
       expect(staged).toContain('+CHANGED')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('discards the repo-root file, not the same-named one under the session cwd (#765)', async () => {
+    // The changes tree's rows carry REPOSITORY-root-relative paths, so a
+    // session whose cwd is `<repo>/pkg` still means `<repo>/README.md` when
+    // its row says `README.md`. Resolving that name session-relative first
+    // restored the same-named file one level down and left the file the row
+    // actually named dirty (the destructive half of #765).
+    const dir = makeNestedScratchRepo()
+    try {
+      const route = mountWithSettings()
+      const result = await invoke(route, 'git.discard', {
+        sessionId: 's-nested',
+        cwd: join(dir, 'pkg'),
+        path: 'README.md',
+      })
+      expect(result.ok).toBe(true)
+      expect(readFileSync(join(dir, 'README.md'), 'utf8')).toBe('root-v1\n')
+      // The same-named file under the session cwd was never the target.
+      expect(readFileSync(join(dir, 'pkg', 'README.md'), 'utf8')).toBe('pkg-DIRTY\n')
+      expect(gitRun(dir, ['status', '--porcelain'])).toBe(' M pkg/README.md\n')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -536,6 +587,28 @@ describe('session cwd resolution over the API route', () => {
     expect(result.ok).toBe(true)
     const value = result as unknown as { ok: boolean; value?: { diff: string } }
     expect(typeof value.value?.diff).toBe('string')
+  })
+
+  it('git.diff previews the repo-root file when the session cwd holds a same-named one (#765)', async () => {
+    // Same rows, but the collision is real: `<repo>/pkg/README.md` EXISTS, so
+    // a session-relative first resolution previewed that file's change while
+    // the row named `<repo>/README.md` (the preview half of #765).
+    const dir = makeNestedScratchRepo()
+    try {
+      const route = mount({
+        sessions: {
+          get: () => ({ header: { cwd: join(dir, 'pkg') } }),
+        },
+      })
+      const result = await invoke(route, 'git.diff', { sessionId: 's-nested', path: 'README.md', staged: false })
+      expect(result.ok).toBe(true)
+      const diff = (result as unknown as { value?: { diff: string } }).value?.diff ?? ''
+      expect(diff).toContain('a/README.md b/README.md')
+      expect(diff).toContain('+root-DIRTY')
+      expect(diff).not.toContain('pkg-DIRTY')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('fs.read resolves repo-relative paths (untracked diff fallback)', async () => {

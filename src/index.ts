@@ -165,11 +165,12 @@ function selectedRepoOf(payload: unknown): string | undefined {
 }
 
 /**
- * Resolve a path that a git command reported — `git status`/`git diff`
- * print paths RELATIVE TO THE REPO TOP LEVEL, which may sit above the
- * session cwd (a session inside a subdirectory of a repository). Absolute
- * paths pass through; relative ones join the repo root (falling back to the
- * cwd when the root cannot be resolved, e.g. a bare directory).
+ * Resolve a relative path an EDITOR surface carried (the file tree, the
+ * editor buffer, and `fs.read`, which the untracked-diff fallback reads
+ * through): the session-relative interpretation wins when it names an
+ * existing path, with the repository root as the fallback. Git's
+ * status/diff ROWS deliberately do NOT come through here — they are
+ * repository-root-relative by construction, see {@link resolveStatusPath}.
  */
 async function resolveGitPath(cwd: string, raw: string, selected?: string): Promise<string> {
   if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
@@ -179,6 +180,24 @@ async function resolveGitPath(cwd: string, raw: string, selected?: string): Prom
   // inside a nested session readable without reopening the repository root.
   const sessionPath = requireAbsolute(join(cwd, raw))
   if (await stat(sessionPath).then(() => true).catch(() => false)) return sessionPath
+  const root = await git.repoRoot(cwd, selected).catch(() => cwd)
+  return requireAbsolute(join(root, raw))
+}
+
+/**
+ * Resolve a path a git status/diff ROW carried: the changes tree's rows and
+ * every action they offer (the inline diff preview, and the destructive
+ * discard). Git prints those paths RELATIVE TO THE REPO TOP LEVEL, which may
+ * sit above the session cwd, and the client forwards them verbatim — so a
+ * relative name ALWAYS joins the repository root. Joining the session cwd
+ * first instead hit a same-named file in the subdirectory the session sits
+ * in (#765: `git.discard` on the row `README.md` restored the `pkg/README.md`
+ * one level down and left the root `README.md` — the file the row names —
+ * dirty). Absolute paths pass through; a cwd outside any repository falls
+ * back to itself, where the git command fails exactly as it did before.
+ */
+async function resolveStatusPath(cwd: string, raw: string, selected?: string): Promise<string> {
+  if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
   const root = await git.repoRoot(cwd, selected).catch(() => cwd)
   return requireAbsolute(join(root, raw))
 }
@@ -431,7 +450,7 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
       const repoRoot = selectedRepoOf(payload)
-      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      const path = record.path === undefined ? undefined : await resolveStatusPath(cwd, requireString(payload, 'path'), repoRoot)
       return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
     },
     'git.stage': async (payload) => {
@@ -481,7 +500,7 @@ function buildApi(
     'git.discard': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const repoRoot = selectedRepoOf(payload)
-      await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot), repoRoot)
+      await git.discard(cwd, await resolveStatusPath(cwd, requireString(payload, 'path'), repoRoot), repoRoot)
       return { ok: true }
     },
     'git.revert': async (payload) => {
