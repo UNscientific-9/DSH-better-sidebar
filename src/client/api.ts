@@ -38,6 +38,9 @@ export interface FsEntry {
   isSymlink: boolean
   /** For symlinks: the target is missing or unreadable (stat failed). */
   broken: boolean
+  /** Directory rows only: the contents are exactly one non-symlink child
+   *  — the explorer folds such chains into one breadcrumb row. */
+  compact?: boolean
 }
 
 /** One level of a `fs.trees` batch: a listing, or that level's failure. */
@@ -282,21 +285,25 @@ function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult>
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
-  fsTree: (scope: SessionScope, path: string, signal?: AbortSignal) =>
-    call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path }), signal),
+  fsTree: (scope: SessionScope, path: string, exclude?: readonly string[], signal?: AbortSignal) =>
+    call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path, exclude }), signal),
   /**
    * Batch listing: every requested level in ONE request (the tree's mount and
    * refresh send the expanded set instead of N `fsTree` calls). A level that
    * failed carries `error` in place — the batch itself still succeeds.
+   * `exclude` carries the explorerExclude pref: matched entries never arrive
+   * (the host filters, so no client-side pass is needed).
    */
-  fsTrees: (scope: SessionScope, paths: readonly string[], signal?: AbortSignal) =>
-    call<{ levels: FsLevel[] }>('fs.trees', scopePayload(scope, { paths: [...paths] }), signal),
+  fsTrees: (scope: SessionScope, paths: readonly string[], exclude?: readonly string[], signal?: AbortSignal) =>
+    call<{ levels: FsLevel[] }>('fs.trees', scopePayload(scope, { paths: [...paths], exclude }), signal),
   /** Global recursive file-name search rooted at the session cwd (the editor
    *  side panel's search box); matches are cwd-relative '/'-separated paths,
    *  and `dirs` names the subset that is a directory (the list navigates the
-   *  tree for those — `fs.read` refuses a directory). */
-  fsSearch: (scope: SessionScope, query: string, signal?: AbortSignal) =>
-    call<{ matches: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
+   *  tree for those — `fs.read` refuses a directory). `exclude` carries the
+   *  explorerExclude pref: matched entries never match and are never
+   *  descended (host-side, in lockstep with the tree). */
+  fsSearch: (scope: SessionScope, query: string, exclude?: readonly string[], signal?: AbortSignal) =>
+    call<{ matches: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query, exclude }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   /** Save a file. `expectedMtimeMs` is the mtime the draft was based on: a
