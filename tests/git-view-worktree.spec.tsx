@@ -431,7 +431,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       const banner = [...container.querySelectorAll<HTMLElement>('[role="alert"]')]
         .find(node => (node.textContent ?? '').includes(`${t('checkoutError')}: dirty worktree`))
       expect(banner).toBeDefined()
-      const input = container.querySelector(`input[placeholder="${t('commitPlaceholder')}"]`)
+      const input = container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
       expect(input).not.toBeNull()
       // The commit bar owns only its own status line: the branch failure is
       // rendered ABOVE it, never under the commit input.
