@@ -195,6 +195,11 @@ function engineExcludeProbe(root: string, exclude: ExcludeTest): (relativePath: 
  * contract — root-relative, '/'-separated, sorted, and split into
  * matches/dirs — so the route and the client stay unchanged. A blank query
  * matches nothing and touches neither the engines nor the filesystem.
+ *
+ * The engines keep their own cap (and report it through `truncated`), so a
+ * root whose first `maxMatches` rows are ALL excluded comes back short with
+ * `truncated: true` rather than silently hiding the remainder — the same
+ * signal a budget-cut walk gives.
  */
 export async function searchFiles(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
   const needle = query.trim()
