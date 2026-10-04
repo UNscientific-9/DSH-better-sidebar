@@ -578,6 +578,11 @@ export function GitLens(props: GitLensProps) {
 
   const stageError = (reason: unknown): string => t('changesStageFailed', { message: errorMessage(reason) })
 
+  /** The remote actions prepend their own label: git's message for a missing
+   *  upstream or a diverged branch says nothing about which button ran. */
+  const pushError = (reason: unknown): string => `${t('pushError')}: ${errorMessage(reason)}`
+  const pullError = (reason: unknown): string => `${t('pullError')}: ${errorMessage(reason)}`
+
   const stageEntry = (path: string, staged: boolean): void => {
     void runAction(
       () => (staged ? api.gitUnstage(gitScopeNow(), path, selectedWorktree) : api.gitStage(gitScopeNow(), path, selectedWorktree)),
@@ -627,6 +632,19 @@ export function GitLens(props: GitLensProps) {
     } finally {
       setSuggesting(false)
     }
+  }
+
+  /** Push the selected checkout's branch. Local commits and the remote ride the
+   *  SAME status line as every other git action — the failures share one cause
+   *  (no upstream, auth, divergence), so a second error channel would only
+   *  split the user's attention. */
+  const push = (): void => {
+    void runAction(() => api.gitPush(gitScopeNow(), selectedWorktree), pushError)
+  }
+
+  /** Pull into the selected checkout (fast-forward only host-side). */
+  const pull = (): void => {
+    void runAction(() => api.gitPull(gitScopeNow(), selectedWorktree), pullError)
   }
 
   /** Switching the selected checkout changes which rows are legitimate to act
@@ -1003,7 +1021,17 @@ export function GitLens(props: GitLensProps) {
             >
               {t('commit')}
             </Button>
+            {/* Shipping the commit without leaving the panel: the two remote
+                actions ride the SAME row and the SAME busy lock as commit /
+                stage, so their failures land on the bar's one status line
+                below instead of opening a second error channel. */}
+            <Button variant="ghost" size="sm" disabled={busy || suggesting} onClick={push}>{t('push')}</Button>
+            <Button variant="ghost" size="sm" disabled={busy || suggesting} onClick={pull}>{t('pull')}</Button>
           </div>
+          {/* The bar's ONE status line stays directly under the message row it
+              belongs to (the placement `changes-tab.spec.tsx` pins), so it keeps
+              reading as "your commit/stage/push failed" rather than as a tab-level
+              banner. */}
           {actionError !== null && <Notice kind="error" tone="inline" role="alert">{actionError}</Notice>}
         </div>
       )}
