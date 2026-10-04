@@ -2,18 +2,21 @@
  * The explorer's `@`-reference button: insert one file or folder reference
  * into the conversation draft of a session.
  *
- * Directories append the folder mention (`@dir/`) as plain text so DSH's
- * folder decoration and completion keep working; files insert a structured
- * chip like the native `@` picker, so the whole reference stays one link
- * instead of decorating only the leading folder. The session-scope context and
- * the conversation input service are resolved at click time; a missing service
- * or scope degrades to a logged no-op, never a crash.
+ * Directories append the folder mention as plain text so DSH's folder
+ * decoration and completion keep working — spelled through the same
+ * constructor as file references (`@"my dir/"`, `@docs/`; an unquoted
+ * `@my dir/` is not a folder token to the host, see `mentionFor`); files
+ * insert a structured chip like the native `@` picker, so the whole
+ * reference stays one link instead of decorating only the leading folder.
+ * The session-scope context and the conversation input service are resolved
+ * at click time; a missing service or scope degrades to a logged no-op,
+ * never a crash.
  *
  * Shared by the plugin's own panel and the native right-Sidebar tab body, so
  * both surfaces behave identically.
  */
 import type { Context } from '../context-types.ts'
-import { appendToDraft, insertFileReference } from './conversation-draft.ts'
+import { appendToDraft, insertFileReference, mentionFor } from './conversation-draft.ts'
 import { relativeTo } from './paths.ts'
 
 /**
@@ -33,7 +36,14 @@ export function referenceInChat(
 ): void {
   const rel = relativeTo(cwd ?? '', path)
   if (isDir) {
-    appendToDraft(ctx, sessionId, `@${rel === '.' ? './' : `${rel}/`}`)
+    const folder = mentionFor(rel, 'folder')
+    if (folder === undefined) {
+      // Same guard as the file path: a path the editor grammar cannot
+      // represent is skipped rather than typed into the composer broken.
+      console.warn('[dsh-better-sidebar] folder reference skipped: unrepresentable path', path)
+      return
+    }
+    appendToDraft(ctx, sessionId, folder.mention)
     return
   }
   if (!insertFileReference(ctx, sessionId, rel)) {

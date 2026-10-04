@@ -195,17 +195,32 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
 }
 
 /**
- * The DSH `@file` spelling for one relative path, mirroring the host grammar
+ * The DSH `@` spelling for one relative path, mirroring the host grammar
  * (`formatFileMention` in `@deepseek-ai/dsh-file-reference`): plain when
  * there is no whitespace, quoted when there is, and `undefined` when the
  * path contains a control character or an embedded quote the editor grammar
  * cannot represent.
+ *
+ * Files and folders share this one constructor so the quoting rule cannot
+ * drift between them. A folder spells the trailing slash *inside* the quotes
+ * (`@"my dir/"`, `@docs/`): the host's folder token matcher
+ * (`FOLDER_REF_RE` in `dsh-client-ui-conversation`) only accepts a quoted
+ * directory once the quote closes, and the message bubble's tokenizer
+ * (`@"[^"\n]+"` in `dsh-client-ui-primitives`) only classifies a closed
+ * quoted token as a folder — unquoted `@my dir/` decorates as a file chip
+ * covering just `my`. The host's own picker emits the *open* form
+ * (`@"my dir/`) while the user is still descending through completion; a
+ * programmatic reference is a finished mention, so it closes the quote.
  */
-export function fileMention(relativePath: string): { mention: string; label: string } | undefined {
+export function mentionFor(
+  relativePath: string,
+  kind: 'file' | 'folder',
+): { mention: string; label: string } | undefined {
   const path = relativePath.replace(/[\\/]+$/, '')
   // eslint-disable-next-line no-control-regex -- rejecting control characters is the point of this guard
   if (/[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return undefined
-  const mention = /\s/u.test(path) ? `@"${path}"` : `@${path}`
+  const target = kind === 'folder' ? `${path}/` : path
+  const mention = /\s/u.test(target) ? `@"${target}"` : `@${target}`
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   const label = at === -1 ? path : path.slice(at + 1)
   return { mention, label }
@@ -217,11 +232,11 @@ export function fileMention(relativePath: string): { mention: string; label: str
  * send, so the reference stays a single link from trigger to basename.
  *
  * Directories are NOT handled here: DSH's folder grammar wants the trailing
- * slash as plain text (`@dir/`) so completion can descend, which
- * `appendToDraft` already covers.
+ * slash as plain text (`@dir/`, see {@link mentionFor}) so completion can
+ * descend, which `appendToDraft` already covers.
  */
 export function insertFileReference(ctx: Context, sessionId: string, relativePath: string): boolean {
-  const reference = fileMention(relativePath)
+  const reference = mentionFor(relativePath, 'file')
   if (reference === undefined) return false
   try {
     const actx = ctx.sessions.scope(sessionId)
