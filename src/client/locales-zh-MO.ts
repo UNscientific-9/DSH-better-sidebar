@@ -364,6 +364,8 @@ export const zhMO: Record<string, string> = {
   sideChatThreads: '切換執行緒 / 新增',
   sideChatSave: '儲存為新工作階段',
   sideChatSaveTitle: '把該執行緒提升為頂層工作階段，出現在主工作階段列表中',
+  sideChatArchive: '歸檔這條側邊對話（在工作階段列表的「顯示已歸檔」裡可找回）',
+  sideChatArchiveRunning: '該執行緒正在執行，停止後才能歸檔',
   sideChatSaved: '已儲存為新工作階段',
   sideChatNoTurn: '至少完成一輪對話後才能儲存',
   sideChatPendingDrop: '最後一則未完成的追問不會包含在新工作階段中',

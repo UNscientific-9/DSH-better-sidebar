@@ -347,6 +347,8 @@ export const id: Record<string, string> = {
   sideChatThreads: 'Beralih thread / baru',
   sideChatSave: 'Simpan sebagai sesi baru',
   sideChatSaveTitle: 'Promosikan thread ini ke sesi tingkat atas dalam daftar sesi utama',
+  sideChatArchive: 'Arsipkan percakapan samping ini (temukan lagi lewat “Tampilkan yang diarsipkan” di daftar sesi)',
+  sideChatArchiveRunning: 'Utas ini sedang berjalan — hentikan sebelum mengarsipkan',
   sideChatSaved: 'Tersimpan sebagai sesi baru',
   sideChatNoTurn: 'Simpan tersedia setelah giliran pertama selesai',
   sideChatPendingDrop: 'Tindak lanjut yang belum terjawab terakhir tidak akan disertakan dalam sesi yang disimpan',

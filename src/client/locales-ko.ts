@@ -341,6 +341,8 @@ export const ko: Record<string, string> = {
   sideChatThreads: '스레드 전환 / 새로 만들기',
   sideChatSave: '새 세션으로 저장',
   sideChatSaveTitle: '이 스레드를 최상위 세션으로 승격하여 주 세션 목록에 표시합니다',
+  sideChatArchive: '이 사이드 대화 보관(세션 목록의 "보관됨 표시"에서 다시 찾을 수 있습니다)',
+  sideChatArchiveRunning: '이 스레드가 실행 중입니다 — 중지한 후 보관하세요',
   sideChatSaved: '새 세션으로 저장됨',
   sideChatNoTurn: '최소 한 턴의 대화를 완료해야 저장할 수 있습니다',
   sideChatPendingDrop: '마지막으로 완료되지 않은 후속 질문은 새 세션에 포함되지 않습니다',

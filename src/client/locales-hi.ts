@@ -349,6 +349,8 @@ export const hi: Record<string, string> = {
   sideChatThreads: 'थ्रेड स्विच / नया',
   sideChatSave: 'नए सत्र के रूप में सहेजें',
   sideChatSaveTitle: 'इस थ्रेड को मुख्य सत्र सूची में शीर्ष-स्तरीय सत्र में प्रमोट करें',
+  sideChatArchive: 'इस साइड बातचीत को संग्रहित करें (सत्र सूची में “संग्रहित दिखाएँ” से दोबारा पा सकते हैं)',
+  sideChatArchiveRunning: 'यह थ्रेड चल रहा है — संग्रहित करने से पहले इसे रोकें',
   sideChatSaved: 'नए सत्र के रूप में सहेजा',
   sideChatNoTurn: 'पहला टर्न पूरा होने के बाद सहेजना उपलब्ध',
   sideChatPendingDrop: 'अंतिम अनुत्तरित फ़ॉलो-अप सहेजे गए सत्र में शामिल नहीं होगा',

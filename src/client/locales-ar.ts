@@ -350,6 +350,8 @@ export const ar: Record<string, string> = {
   sideChatThreads: 'تبديل خيط / جديد',
   sideChatSave: 'حفظ كجلسة جديدة',
   sideChatSaveTitle: 'ترقية هذا الخيط إلى جلسة عالية المستوى في قائمة الجلسات الرئيسية',
+  sideChatArchive: 'أرشفة هذه المحادثة الجانبية (يمكن العثور عليها مجددًا عبر «إظهار المؤرشفة» في قائمة الجلسات)',
+  sideChatArchiveRunning: 'هذا الخيط قيد التشغيل — أوقفه قبل الأرشفة',
   sideChatSaved: 'تم الحفظ كجلسة جديدة',
   sideChatNoTurn: 'الحفظ متاح بعد أول دور مكتمل',
   sideChatPendingDrop: 'لن يُضمَّ آخر متابعة لم يُجَب عنها في الجلسة المحفوظة',

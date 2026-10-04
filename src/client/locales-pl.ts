@@ -351,6 +351,8 @@ export const pl: Record<string, string> = {
   sideChatThreads: 'Przełącz wątek / nowy',
   sideChatSave: 'Zapisz jako nową sesję',
   sideChatSaveTitle: 'Promuj ten wątek do sesji najwyższego poziomu na głównej liście sesji',
+  sideChatArchive: 'Zarchiwizuj tę rozmowę boczną (znajdziesz ją ponownie przez „Pokaż zarchiwizowane” na liście sesji)',
+  sideChatArchiveRunning: 'Ten wątek działa — zatrzymaj go przed archiwizacją',
   sideChatSaved: 'Zapisano jako nową sesję',
   sideChatNoTurn: 'Zapis jest dostępny po pierwszej ukończonej turze',
   sideChatPendingDrop: 'Ostatnie niezakończone pytanie następcze nie zostanie uwzględnione w zapisanej sesji',
