@@ -322,6 +322,12 @@ interface TabComponentProps {
   // （含空格时按宿主语法加引号成 `@"my dir/"`，否则宿主读不成 folder），
   // 保留宿主文件夹装饰与补全；false 为文件：走宿主结构化引用 chip
   // （显示 @basename、序列化为完整 @path），宿主拒绝时回退纯文本。
+  // path 按宿主确认的 workspace root（客户端 `ctx.get('workspaces')` 的
+  // `WorkspaceView.path`，按会话成员匹配）投影，不是会话 cwd：@ 语法以
+  // workspace root 为基准。工作区数据不可用（服务缺失 / 快照未就绪 /
+  // 会话不属于任何工作区）或路径在 workspace 之外时不写入草稿，只留一行
+  // warn——绝不产出猜测的相对路径或绝对路径。目录插入会带一个尾随分隔空格，
+  // 使连续两次点击不会粘成一条 token。
   onReferenceFile?: (path: string, isDir: boolean) => void
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void

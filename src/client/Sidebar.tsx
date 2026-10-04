@@ -531,20 +531,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }), [store, sessionId, cwd, ctx])
 
   /**
-   * The explorer's @-reference button. Directories append the folder mention
-   * (`@dir/`) as plain text so DSH's folder decoration and completion keep
-   * working; files insert a structured chip like the native `@` picker, so
-   * the whole reference stays one link instead of decorating only the
-   * leading folder. Resolves the session-scope ctx and the conversation
-   * input service at click time; a missing service or scope degrades to a
-   * logged no-op, never a crash. Defined above the no-session early return
-   * — a hook must never sit behind a conditional return (React counts hooks
-   * per render).
+   * The explorer's @-reference button. The token is spelled against the
+   * host-confirmed workspace root (see `referenceInChat`), directories as a
+   * complete plain-text folder mention so DSH's folder decoration and
+   * completion keep working, files as a structured chip like the native `@`
+   * picker. Resolves the session-scope ctx, the conversation input service
+   * and the workspace snapshot at click time; a missing service or an
+   * unresolved workspace degrades to a logged no-op, never a crash. Defined
+   * above the no-session early return — a hook must never sit behind a
+   * conditional return (React counts hooks per render).
    */
   const referenceInChat = useCallback((path: string, isDir: boolean): void => {
     if (sessionId === undefined) return
-    referenceInChatShared(ctx, sessionId, cwd, path, isDir)
-  }, [ctx, sessionId, cwd])
+    referenceInChatShared(ctx, sessionId, path, isDir)
+  }, [ctx, sessionId])
 
   if (state === undefined || sessionId === undefined) {
     // No conversation yet: the host stays mounted (the drag shield keeps
