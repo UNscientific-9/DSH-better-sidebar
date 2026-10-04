@@ -30,6 +30,7 @@ import type { SessionScope } from '../api.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
+import { useSessionRoot } from '../use-session-root.ts'
 import type { BetterSidebarService } from '../service.ts'
 import { toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
@@ -360,14 +361,6 @@ function useRecordVersion(records: NativeTabRecords, sessionId: string, id: stri
   )
 }
 
-/** The current session's workspace root, live from the client session list. */
-function useSessionCwd(ctx: Context, sessionId: string): string | undefined {
-  return useSyncExternalStore(
-    useMemo(() => (listener: () => void) => ctx.sessions.list.subscribe(listener), [ctx]),
-    () => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd,
-  )
-}
-
 /**
  * One plugin tab rendered inside the native right Sidebar: the descriptor's
  * own component with the plugin's props, over a synthetic record minted from
@@ -391,7 +384,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
   const seatSessionId = props.sessionId
   const scopeSessionId = props.sessionIdOf?.(info) ?? seatSessionId
   const version = useRecordVersion(records, seatSessionId, nativeTab.id)
-  const cwd = useSessionCwd(ctx, scopeSessionId)
+  const cwd = useSessionRoot(ctx, scopeSessionId)
   const scope = useMemo((): SessionScope => ({ sessionId: scopeSessionId, cwd }), [scopeSessionId, cwd])
   // `version` is not read: it only forces this render when the record changed.
   void version

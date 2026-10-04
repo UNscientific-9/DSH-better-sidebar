@@ -54,6 +54,7 @@ import { readPersistedSession } from './session-store.ts'
 // Shared with the client's batch splitter: the two halves must agree on the
 // row bound, so it lives in a dependency-free module both can import.
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
+import { activeWorktreeRootOf } from './active-worktree.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -282,7 +283,7 @@ function buildApi(
     const sessionId = requireString(payload, 'sessionId')
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
-    return { sessionId, cwd: await sessionCwdOf(ctx, sessionId, clientCwd) }
+    return { sessionId, cwd: await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, clientCwd)) }
   }
   /** Resolve the optional Git-panel checkout selector against the selected
    * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
@@ -1003,7 +1004,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (sessionId === null || dir === null || relativePath === null || relativePath.trim() === '') {
           throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
         }
-        const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined))
         const { path, size } = await writeWorkspaceUpload({
           cwd,
           dir,
@@ -1076,7 +1077,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
-        const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined))
         // Resolution is the shared contract's alone: relative joins the
         // session cwd, absolute stays, `~` expands against the home (#713),
         // remote-mirror namespaces project. Pre-joining here would paste a
@@ -1154,7 +1155,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // back to the process cwd and is normally refused by the workspace
         // real-path guard, with the same semantics as the media route's
         // fallback.
-        const cwd = await sessionCwdOf(ctx, sessionId)
+        const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId))
         const absolute = await ensureWorkspacePath(cwd, path)
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
@@ -1301,7 +1302,7 @@ async function handleFsWatchFrame(
   const path = typeof frame.path === 'string' ? frame.path : undefined
   if (path === undefined || path === '') return
   try {
-    const cwd = await sessionCwdOf(ctx, sessionId)
+    const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId))
     const dir = await ensureWorkspacePath(cwd, path)
     if (frame.op === 'unwatch') {
       watchers.remove(dir)
