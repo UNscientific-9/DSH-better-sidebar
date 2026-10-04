@@ -261,6 +261,24 @@ describe('removeWorkspaceEntry', () => {
     await expect(removeWorkspaceEntry({ cwd: root, path: join(root, 'no-such.txt') }))
       .rejects.toMatchObject({ code: 'fs-error' })
   })
+
+  it.runIf(canSymlink)('refuses a symlink aimed AT the root', async () => {
+    // The guard resolves the target's identity on purpose: this link stands
+    // for the project itself, so it is refused instead of unlinked.
+    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-rootlink-'))
+    const inner = join(ws, 'Proj')
+    mkdirSync(join(inner, 'src'), { recursive: true })
+    writeFileSync(join(inner, 'src', 'keep.ts'), 'x')
+    symlinkSync(inner, join(ws, 'link-to-proj'))
+    try {
+      await expect(removeWorkspaceEntry({ cwd: inner, path: join(ws, 'link-to-proj') }))
+        .rejects.toMatchObject({ code: 'fs-error' })
+      expect(existsSync(join(inner, 'src', 'keep.ts'))).toBe(true)
+      expect(existsSync(join(ws, 'link-to-proj'))).toBe(true)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('session-relative targets (the shared resolution contract, #646)', () => {
@@ -313,6 +331,79 @@ describe('session-relative targets (the shared resolution contract, #646)', () =
       const made = await mkdirWorkspaceEntry({ cwd: ws, path: '.', name: 'sub' })
       expect(made.path).toBe(join(ws, 'sub'))
       expect(existsSync(join(ws, 'sub'))).toBe(true)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * One directory has many SPELLINGS — a case variant, a `\\?\` prefix, an 8.3
+ * short name, a mapped drive. The root guard compared the two strings, so any
+ * of them walked past it and "delete this row" became a recursive delete of
+ * the whole project. The guard compares what the filesystem itself compares
+ * (`dev`+`ino`), which does not care how a path is spelled.
+ *
+ * Windows-only: on Linux the variant is a different directory, not a spelling
+ * of this one, and a case variant of a real path does not exist.
+ */
+describe.runIf(process.platform === 'win32')('workspace-root guard across path spellings', () => {
+  /** A project directory whose name carries letters, so a lowercase variant is
+   *  a real spelling of the same directory. */
+  function makeProject(): { ws: string; inner: string } {
+    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-root-'))
+    const inner = join(ws, 'ProjDir')
+    mkdirSync(join(inner, 'src'), { recursive: true })
+    writeFileSync(join(inner, 'src', 'keep.ts'), 'x')
+    return { ws, inner }
+  }
+
+  it('refuses a case variant of the root', async () => {
+    const { ws, inner } = makeProject()
+    try {
+      const variant = inner.toLowerCase()
+      // `ProjDir` carries capitals, so the lowercase spelling always differs —
+      // this does not depend on how the temp directory itself is spelled.
+      expect(variant).not.toBe(inner)
+      await expect(removeWorkspaceEntry({ cwd: inner, path: variant }))
+        .rejects.toMatchObject({ code: 'fs-error' })
+      expect(existsSync(join(inner, 'src', 'keep.ts'))).toBe(true)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses the extended-length spelling of the root', async () => {
+    const { ws, inner } = makeProject()
+    try {
+      await expect(removeWorkspaceEntry({ cwd: inner, path: `\\\\?\\${inner}` }))
+        .rejects.toMatchObject({ code: 'fs-error' })
+      expect(existsSync(join(inner, 'src', 'keep.ts'))).toBe(true)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a case variant for rename too', async () => {
+    const { ws, inner } = makeProject()
+    try {
+      await expect(renameWorkspaceEntry({ cwd: inner, path: inner.toLowerCase(), name: 'moved' }))
+        .rejects.toMatchObject({ code: 'fs-error' })
+      expect(existsSync(join(inner, 'src', 'keep.ts'))).toBe(true)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+
+  it('still removes a SUBdirectory reached through a spelled-out path', async () => {
+    const { ws, inner } = makeProject()
+    try {
+      mkdirSync(join(inner, 'Sub'))
+      // A spelled-out path that is NOT the root passes the guard — and unlike a
+      // case variant this holds on a case-SENSITIVE volume too.
+      await removeWorkspaceEntry({ cwd: inner, path: `\\\\?\\${join(inner, 'Sub')}` })
+      expect(existsSync(join(inner, 'Sub'))).toBe(false)
+      expect(existsSync(inner)).toBe(true)
     } finally {
       rmSync(ws, { recursive: true, force: true })
     }

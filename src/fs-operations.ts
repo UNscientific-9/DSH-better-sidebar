@@ -130,10 +130,47 @@ export interface WorkspaceRenameInput {
 async function resolveEntry(
   cwd: string,
   target: string,
-): Promise<{ absolute: string; real: string; realCwd: string }> {
+): Promise<{ absolute: string; realCwd: string }> {
   const absolute = resolveTarget(cwd, target)
   const realCwd = requireAbsolute(cwd)
-  return { absolute, real: absolute, realCwd }
+  return { absolute, realCwd }
+}
+
+/**
+ * Whether `target` IS the workspace root. Comparing the two SPELLINGS is not
+ * enough: the resolution above is deliberately lexical (a symlink row must
+ * keep addressing the LINK, not its target), and one directory has many
+ * spellings — a case variant, a `\\?\` prefix, an 8.3 short name, a mapped
+ * drive. Each of them walked straight past this guard and turned "delete this
+ * row" into a recursive delete of the whole project. `dev`+`ino` is the
+ * identity the filesystem itself uses, and it does not care how the path is
+ * spelled. `stat` (not `lstat`) is deliberate: a symlink aimed AT the root is
+ * refused too — no link is worth the project behind it. A target that cannot
+ * be stat'ed (it may legitimately be gone) falls back to the spelling.
+ */
+/**
+ * Compare two spellings the way Windows itself does: the extended-length
+ * prefix is not part of the name and case is free. Only reached when the
+ * volume cannot answer with an inode (FAT/exFAT, some network shares) — weaker
+ * than an identity, but never weaker than the plain string compare it
+ * replaced.
+ */
+function sameSpelling(a: string, b: string): boolean {
+  const strip = (value: string): string => value.replace(/^\\\\\?\\/, '')
+  const left = strip(a)
+  const right = strip(b)
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
+async function isWorkspaceRoot(target: string, root: string): Promise<boolean> {
+  try {
+    const [entry, base] = await Promise.all([stat(target), stat(root)])
+    // No inode = no identity: fall back to the spelling.
+    if (entry.ino === 0 || base.ino === 0) return sameSpelling(target, root)
+    return entry.dev === base.dev && entry.ino === base.ino
+  } catch {
+    return sameSpelling(target, root)
+  }
 }
 
 /** Whether a path exists (ENOENT → false; other failures propagate). */
@@ -163,8 +200,8 @@ export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise
   if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
     throw new SidebarError('bad-request', 'name must be a single path segment', 400)
   }
-  const { absolute, real, realCwd } = await resolveEntry(cwd, path)
-  if (real === realCwd) {
+  const { absolute, realCwd } = await resolveEntry(cwd, path)
+  if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot rename the workspace root', 400)
   }
   if (basename(absolute) === name) return { path: absolute }
@@ -243,8 +280,8 @@ export interface WorkspaceRemoveInput {
  */
 export async function removeWorkspaceEntry(input: WorkspaceRemoveInput): Promise<{ path: string }> {
   const { cwd, path } = input
-  const { absolute, real, realCwd } = await resolveEntry(cwd, path)
-  if (real === realCwd) {
+  const { absolute, realCwd } = await resolveEntry(cwd, path)
+  if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot remove the workspace root', 400)
   }
   try {

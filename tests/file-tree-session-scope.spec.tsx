@@ -1,0 +1,156 @@
+/**
+ * FileTree session scope: the workbench keeps ONE mounted tree instance per
+ * tab id, and tab ids restart per session, so a session (or cwd) swap
+ * re-renders this component in place instead of mounting a fresh one. Nothing
+ * picked in the previous project may survive that swap — a leftover selection
+ * made "delete selected" send the NEW session's scope with the OLD project's
+ * absolute paths, and the host applies those verbatim (containment was removed
+ * on purpose): it deleted another project's files. Confirmations and inline
+ * editors aimed at a row that is no longer on screen are the same leak.
+ *
+ * What must NOT change: an ordinary re-render of the SAME session keeps every
+ * bit of that state (the workbench relies on the instance staying alive).
+ */
+// @vitest-environment jsdom
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { act } from 'react-dom/test-utils'
+import { FileTree } from '../src/client/FileTree.tsx'
+
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
+
+// vitest follows the OS locale; pin en-US so the copy asserted below is English.
+beforeAll(() => {
+  Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
+})
+
+const { fsRemove, fsTrees } = vi.hoisted(() => ({
+  fsRemove: vi.fn(async (_scope: unknown, path: string) => ({ path })),
+  // Every requested level answers with the same two rows under THAT level's
+  // path, so each row's absolute path names the project it belongs to.
+  fsTrees: vi.fn(async (_scope: unknown, paths: readonly string[]) => ({
+    levels: paths.map(path => ({
+      path,
+      entries: [
+        { name: 'a.ts', path: `${path}/a.ts`, isDir: false },
+        { name: 'b.ts', path: `${path}/b.ts`, isDir: false },
+      ],
+      truncated: false,
+    })),
+  })),
+}))
+
+vi.mock('../src/client/api.ts', () => ({
+  api: {
+    fsTrees,
+    fsRemove,
+    // The tree reads the shared git-status store; a non-repo answer keeps every
+    // row plain (this spec is about state ownership).
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
+  },
+  downloadUrl: () => '/sidebar/file',
+  isOutsideWorkspaceMessage: () => false,
+}))
+
+let container: HTMLDivElement
+let root: Root
+
+/** Render — or RE-render in place — the one mounted tree, exactly as the
+ *  workbench's reused tab instance does on a session swap. */
+async function render(sessionId: string, cwd: string): Promise<void> {
+  await act(async () => {
+    root.render(createElement(FileTree, {
+      sessionId,
+      cwd,
+      expanded: [],
+      revealed: [],
+      onToggle: () => {},
+      onOpenFile: () => {},
+      onReferenceFile: () => {},
+      refreshTick: 0,
+      onUploadRequest: () => {},
+      busy: false,
+    }))
+  })
+}
+
+function click(el: Element, init: MouseEventInit = {}): void {
+  act(() => { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init })) })
+}
+
+function rowByName(name: string): HTMLElement {
+  const row = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
+    .find(el => el.querySelector('[class*="explorerName"]')?.textContent === name)
+  if (row === undefined) throw new Error(`row not found: ${name}`)
+  return row
+}
+
+/** The batch bar (the kit's section band carries the page class). */
+function selectionBar(): HTMLElement | null {
+  return container.querySelector<HTMLElement>('[class*="explorerSelectionBar"]')
+}
+
+function openMenu(name: string): void {
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 })
+  act(() => { rowByName(name).dispatchEvent(event) })
+}
+
+function clickMenuitem(label: string): void {
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(el => el.textContent === label)
+  if (item === undefined) throw new Error(`menuitem "${label}" not found`)
+  act(() => { item.click() })
+}
+
+afterEach(() => {
+  act(() => { root.unmount() })
+  container.remove()
+  document.body.innerHTML = ''
+  fsRemove.mockClear()
+})
+
+function mount(): void {
+  container = document.createElement('div')
+  document.body.append(container)
+  root = createRoot(container)
+}
+
+describe('FileTree session scope', () => {
+  it('drops the previous project\'s selection instead of deleting its files', async () => {
+    mount()
+    await render('s1', '/projects/alpha')
+    click(rowByName('a.ts'), { ctrlKey: true })
+    expect(selectionBar()?.textContent).toContain('1 selected')
+
+    // The same mounted instance, now showing session B's project.
+    await render('s2', '/projects/beta')
+
+    expect(selectionBar()).toBeNull()
+    expect(fsRemove).not.toHaveBeenCalled()
+  })
+
+  it('keeps the selection when the SAME session re-renders', async () => {
+    mount()
+    await render('s1', '/projects/alpha')
+    click(rowByName('a.ts'), { ctrlKey: true })
+
+    // A refresh tick, a new store revision, a parent re-render: still s1.
+    await render('s1', '/projects/alpha')
+
+    expect(selectionBar()?.textContent).toContain('1 selected')
+  })
+
+  it('closes a delete confirmation opened in the previous session', async () => {
+    mount()
+    await render('s1', '/projects/alpha')
+    openMenu('a.ts')
+    clickMenuitem('Delete')
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+
+    await render('s2', '/projects/beta')
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(fsRemove).not.toHaveBeenCalled()
+  })
+})

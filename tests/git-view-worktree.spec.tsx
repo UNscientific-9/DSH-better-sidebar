@@ -685,3 +685,55 @@ describe('GitLens (changes tab, git lens) change tree', () => {
     }
   })
 })
+
+/**
+ * The lens lives in a REUSED tab instance (the workbench keeps one mounted
+ * component per tab id and swaps `scope`), so a destructive confirmation armed
+ * for a row of the previous project must not survive the swap: its `onConfirm`
+ * closure carries that row's path while `gitScopeNow()` already reads the new
+ * scope — the discard would land in the project that took over the pane.
+ */
+describe('GitLens (changes tab, git lens) scope swap', () => {
+  it('drops a pending discard confirmation when the scope changes', async () => {
+    // One primary checkout, so the view stays on MAIN's changed row.
+    const onlyMain: GitWorktree[] = [{ path: MAIN, branch: 'main', current: true, changes: 1 }]
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue(onlyMain)
+    vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+    const discard = vi.spyOn(api, 'gitDiscard')
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+
+      const row = container.querySelector<HTMLElement>('[data-path="main-change.ts"]')
+      if (row === null) throw new Error('changed row not found')
+      act(() => {
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }))
+      })
+      const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find(el => el.textContent === t('discard'))
+      if (item === undefined) throw new Error('discard menu item not found')
+      act(() => { item.click() })
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+
+      // Another session takes over the same mounted instance.
+      mountGit(root, { scope: { sessionId: 's2', cwd: AGENT } })
+      await flushEffects()
+
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(discard).not.toHaveBeenCalled()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+      document.body.innerHTML = ''
+    }
+  })
+})

@@ -520,6 +520,15 @@ export function GitLens(props: GitLensProps) {
     setRepoChoices([])
     clearDerived()
     setViewError(null)
+    // The three destructive entry points are aimed at a ROW of the previous
+    // scope: the menus carry that row's path and `confirmPending` executes a
+    // closure over it, while `gitScopeNow()` already reads the NEW scope — so
+    // a discard/revert/cherry-pick confirmed here would land in the project
+    // that took over the pane (same class as the file tree's cross-session
+    // delete).
+    setFileMenu(null)
+    setHistoryMenu(null)
+    setConfirm(null)
     if (visible) void refresh(false)
     // Granular scope fields: the refresh identity is stable, only a real
     // session/cwd change restarts the chain.

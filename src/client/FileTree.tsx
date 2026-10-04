@@ -980,6 +980,38 @@ export function FileTree(props: {
     setSelection(new Set())
   }, [setSelection])
 
+  /**
+   * A session/cwd swap REUSES this component: the workbench keeps one mounted
+   * instance per tab id, and tab ids restart per session. Every path-shaped
+   * piece of state here therefore outlives the project it was picked in — and
+   * the selection is the dangerous one, because "delete selected" sends THIS
+   * session's scope with the PREVIOUS session's absolute paths, which the host
+   * applies verbatim (containment was removed on purpose): it deleted another
+   * project's files. The rest is the same leak in harmless clothing — a menu,
+   * an inline editor, an armed confirmation aimed at a row that is no longer
+   * on screen.
+   */
+  useEffect(() => {
+    setSelection(new Set())
+    kindRef.current.clear()
+    anchorRef.current = null
+    setRowMenu(null)
+    setApps(null)
+    setCopiedPath(null)
+    setRenaming(null)
+    setNewFolder(null)
+    setConfirmDelete(null)
+    setConfirmDeleteSelected(false)
+    // A batch walk of the PREVIOUS session may still be in flight (it carries
+    // its own scope, so it stays safe) — but its flag must not lock the new
+    // session's bar if that walk died without settling.
+    setDeletingSelected(false)
+    setActionError(null)
+    setLoadError(null)
+    pendingUploadDir.current = undefined
+    resetDrop()
+  }, [sessionId, cwd, resetDrop, setSelection])
+
   const copySelectedPaths = useCallback((): void => {
     void writeClipboard([...selectedRef.current].join('\n'))
   }, [])
@@ -1445,6 +1477,14 @@ export function FileTree(props: {
     setArchiveBusy(false)
     setArchiveProgress(null)
   }, [])
+
+  // A session/cwd swap abandons the archive job with it: the poller would keep
+  // asking with the NEW scope for the PREVIOUS session's job (the host refuses
+  // that), and the strip would report a zip failure in a project that never
+  // asked for one.
+  useEffect(() => {
+    settleArchive()
+  }, [sessionId, cwd, settleArchive])
 
   const failArchive = useCallback((message: string): void => {
     setActionError(t('zipFailed', { message }))
