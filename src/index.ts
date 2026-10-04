@@ -55,6 +55,7 @@ import { readPersistedSession } from './session-store.ts'
 // row bound, so it lives in a dependency-free module both can import.
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
+import { decodeTextBytes, encodeText, encodingOfFile } from './text-encoding.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -206,7 +207,8 @@ async function resolveStatusPath(cwd: string, raw: string, selected?: string): P
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
 
-/** Text read of a file with the size cap; binary detection via NUL probe.
+/** Text read of a file with the size cap; text encoding is detected before
+ *  the NUL-based binary fallback so UTF-16/UTF-32 text remains editable.
  *  Binary reads also return the first {@link READ_HEAD_LIMIT} bytes (base64)
  *  so the client can re-match viewers by content (`detect`). */
 async function readText(path: string, readLimit: number): Promise<{
@@ -231,12 +233,13 @@ async function readText(path: string, readLimit: number): Promise<{
     const buffer = Buffer.alloc(Math.min(size, readLimit))
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const slice = buffer.subarray(0, bytesRead)
-    const binary = slice.includes(0)
+    const decoded = decodeTextBytes(slice, truncated)
+    const binary = decoded === null
     const head = binary
       ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
       : undefined
     return {
-      content: binary ? '' : slice.toString('utf8'),
+      content: decoded?.content ?? '',
       truncated,
       binary,
       size,
@@ -393,6 +396,9 @@ function buildApi(
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
       const content = requireString(payload, 'content')
+      // Detect the encoding BEFORE the temp write so the save round-trips the
+      // bytes the file already used (GBK / UTF-16 / BOM'd UTF-8 stay put).
+      const encoding = await encodingOfFile(path)
       // Per-request temp name (same pattern as writeWorkspaceUpload): a
       // pid-suffixed name is shared by every concurrent save to the same
       // path, letting two writers interleave into one temp file — and the
@@ -400,7 +406,7 @@ function buildApi(
       const tmp = join(dirname(path), `.${basename(path)}.dsh-sidebar-tmp-${randomUUID()}.tmp`)
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, content, { encoding: 'utf8', flag: 'wx' })
+        await writeFile(tmp, encodeText(content, encoding), { flag: 'wx' })
         await rename(tmp, path)
       } catch (error) {
         await rm(tmp, { force: true }).catch(() => {})

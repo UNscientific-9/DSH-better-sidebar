@@ -12,6 +12,7 @@ import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-
 import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
+import { encodeText } from '../src/text-encoding.ts'
 import { downloadUrl, htmlUrl } from '../src/client/api.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
@@ -798,6 +799,54 @@ describe('session cwd resolution over the API route', () => {
       for (const result of results) expect(result.status).toBe('fulfilled')
       const written = readFileSync(target, 'utf8')
       expect([draftA, draftB]).toContain(written)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fs.write keeps the on-disk encoding of a GBK file (#523)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-encoding-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'legacy.cmd')
+      const text = '@echo off\r\necho 中文测试\r\n'
+      writeFileSync(target, encodeText(text, 'gbk'))
+      const read = await invoke(route, 'fs.read', { sessionId: 'encoding', path: target })
+      const value = read.value as { kind?: string; content?: string } | undefined
+      // The CP936 bytes decode to the text the file means, not to mojibake.
+      expect(value?.kind).toBe('text')
+      expect(value?.content).toBe(text)
+      // Saving that text back must not silently convert the file to UTF-8.
+      const write = await invoke(route, 'fs.write', { sessionId: 'encoding', path: target, content: value?.content })
+      expect(write.ok).toBe(true)
+      expect(readFileSync(target).equals(encodeText(text, 'gbk'))).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fs.read keeps a capped CJK UTF-8 file UTF-8 (the cap cuts a character, #523)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-readcap-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'big.txt')
+      // The default 512 KiB readLimit lands two bytes into a three-byte
+      // character; the GBK probe accepts that partial tail, so the read used
+      // to come back as 涓枃-style mojibake.
+      writeFileSync(target, Buffer.from('中'.repeat(174_763), 'utf8'))
+      const result = await invoke(route, 'fs.read', { sessionId: 'readcap', path: target })
+      const value = result.value as { kind?: string; content?: string; truncated?: boolean } | undefined
+      expect(value?.kind).toBe('text')
+      expect(value?.truncated).toBe(true)
+      // The known-good prefix reads as 中, with the usual replacement
+      // character for the cut tail — never as 涓枃 mojibake.
+      expect(value?.content?.startsWith('中中')).toBe(true)
+      expect(value?.content).not.toContain('涓')
+      expect(value?.content?.endsWith('\ufffd')).toBe(true)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
