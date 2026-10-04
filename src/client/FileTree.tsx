@@ -53,7 +53,7 @@ import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type
 import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
-import { isImeComposition } from './ime-guard.ts'
+import { isLikelyImeKey } from './ime-guard.ts'
 import { useSubmenuFlip } from './menu-flip.ts'
 import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
@@ -1512,8 +1512,12 @@ export function FileTree(props: {
 
   /** The inline rename editor replacing one row (dirs and files alike):
    *  same indent/icon/height for a seamless swap, Enter/blur commits,
-   *  Escape cancels, IME composition keys never reach the handlers (the
-   *  shared isImeComposition guard). */
+   *  Escape cancels. Composition keys must not commit the name; this handler
+   *  is a NON-intercepting early return (no stopPropagation), so it asks the
+   *  conservative isLikelyImeKey — the document capture guard only swallows
+   *  keys inside a live composition window by design (bare legacy 229
+   *  keydowns pass it, #833), which is right for the guard and not enough
+   *  here. */
   const renderRenameRow = (entry: FsEntry, depth: number): ReactNode => (
     <div
       key={entry.path}
@@ -1533,7 +1537,7 @@ export function FileTree(props: {
           setRenaming(prev => prev === null ? prev : { ...prev, value: event.target.value })
         }}
         onKeyDown={(event) => {
-          if (isImeComposition(event)) return
+          if (isLikelyImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
             commitRename(entry.path, renaming?.value ?? '')
@@ -1549,7 +1553,7 @@ export function FileTree(props: {
 
   /** The inline new-folder editor at the top of one level: the same
    *  interaction contract as the rename editor (Enter commits, Escape
-   *  cancels, blur commits, IME guarded). */
+   *  cancels, blur commits, conservatively IME-guarded). */
   const renderNewFolderRow = (dir: string, depth: number): ReactNode => (
     <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
       {dirRowIcon(dir, true)}
@@ -1564,7 +1568,7 @@ export function FileTree(props: {
           setNewFolder(prev => prev === null ? prev : { ...prev, value: event.target.value })
         }}
         onKeyDown={(event) => {
-          if (isImeComposition(event)) return
+          if (isLikelyImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
             commitNewFolder(dir, newFolder?.value ?? '')
