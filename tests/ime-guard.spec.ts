@@ -3,8 +3,10 @@
  * IME-composition guard tests.
  *
  * The guard registers document CAPTURE-phase keydown/keyup listeners that
- * stopPropagation() while an input method is composing (isComposing or the
- * legacy keyCode 229). These tests pin:
+ * stopPropagation() while an input method is composing (isComposing, or the
+ * legacy keyCode 229 *inside a live composition context* — bare synthetic
+ * 229 keydowns from layout-switcher utilities must pass through). These tests
+ * pin:
  *
  * 1. the pure decision (`isImeComposition`);
  * 2. the native-listener path — a bubble listener on `document` and a
@@ -22,7 +24,7 @@
  * production — dispatching on `document` itself would run all listeners in
  * the target phase where stopPropagation does not stop same-node listeners.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -48,8 +50,11 @@ describe('isImeComposition', () => {
     expect(isImeComposition({ isComposing: true, keyCode: 0 })).toBe(true)
   })
 
-  it('treats keyCode 229 as composition (legacy engines without isComposing)', () => {
-    expect(isImeComposition({ isComposing: false, keyCode: 229 })).toBe(true)
+  it('treats keyCode 229 as composition only inside a live composition context', () => {
+    // No composition events were dispatched, so no composition is live: a bare
+    // synthetic 229 (layout-switcher utilities emit these) must NOT count.
+    expect(isImeComposition({ isComposing: false, keyCode: 229 })).toBe(false)
+    expect(isImeComposition({ isComposing: true, keyCode: 229 })).toBe(true)
   })
 
   it('treats both signals together as composition', () => {
@@ -108,10 +113,44 @@ describe('registerImeGuard — native listeners', () => {
     expect(seen).toEqual([])
   })
 
-  it('blocks composition keys signalled by keyCode 229 only', () => {
+  it('blocks a keyCode 229 keydown inside a live composition (legacy engines emit 229 with isComposing=false)', () => {
     dispose = registerImeGuard()
-    input.dispatchEvent(keyEvent('keydown', { key: 'ArrowDown', keyCode: 229 }))
+    document.dispatchEvent(new Event('compositionstart'))
+    input.dispatchEvent(keyEvent('keydown', { key: 'ArrowDown', isComposing: false, keyCode: 229 }))
     expect(seen).toEqual([])
+  })
+
+  it('keeps blocking a keyCode 229 keydown right after compositionend (legacy closing keydown)', () => {
+    vi.useFakeTimers()
+    try {
+      dispose = registerImeGuard()
+      document.dispatchEvent(new Event('compositionstart'))
+      document.dispatchEvent(new Event('compositionend'))
+      input.dispatchEvent(keyEvent('keydown', { key: 'a', isComposing: false, keyCode: 229 }))
+      expect(seen).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets a bare synthetic keyCode 229 keydown through when no composition ever started (KeyRay regression)', () => {
+    dispose = registerImeGuard()
+    input.dispatchEvent(keyEvent('keydown', { key: 'ArrowDown', isComposing: false, keyCode: 229 }))
+    expect(seen).toEqual(['input:keydown', 'document:keydown'])
+  })
+
+  it('lets a keyCode 229 keydown through after the post-compositionend grace window expires', () => {
+    vi.useFakeTimers()
+    try {
+      dispose = registerImeGuard()
+      document.dispatchEvent(new Event('compositionstart'))
+      document.dispatchEvent(new Event('compositionend'))
+      vi.advanceTimersByTime(51)
+      input.dispatchEvent(keyEvent('keydown', { key: 'ArrowDown', isComposing: false, keyCode: 229 }))
+      expect(seen).toEqual(['input:keydown', 'document:keydown'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('still blocks after the composition signal is gone (guard is per-event)', () => {
