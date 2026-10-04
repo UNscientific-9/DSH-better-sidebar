@@ -51,7 +51,7 @@ import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
-import { api } from './api.ts'
+import { useSessionRoot } from './use-session-root.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -218,7 +218,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const state = snapshot.state
   const sessionId = snapshot.sessionId
-  const summaryCwd = sessionId === undefined ? undefined : sessionList.byId[sessionId]?.cwd
   // 空白会话（无 user/assistant message）里宿主不渲染会话头，本插件的会话头入口不可达：
   // 由 DockFallback 自行按会话相位决定是否渲染（sidebar/dock-fallback.tsx），二者互斥。
 
@@ -278,21 +277,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     return () => { for (const tag of tags) tag.remove() }
   }, [presetCss, customCss, preset?.id])
 
-  // While the session's header is still hydrating (or the session is blank),
-  // the list summary may carry no cwd; ask the host once (it falls back to
-  // the process cwd) so the explorer root and the git rows are real from
-  // first paint instead of showing "no session".
-  const [fetchedCwd, setFetchedCwd] = useState<string | undefined>(undefined)
-  useEffect(() => {
-    setFetchedCwd(undefined)
-    if (sessionId === undefined || summaryCwd !== undefined) return
-    let cancelled = false
-    api.sessionCwd({ sessionId })
-      .then(result => { if (!cancelled) setFetchedCwd(result.cwd) })
-      .catch(() => { /* the explorer/git rows surface their own errors */ })
-    return () => { cancelled = true }
-  }, [sessionId, summaryCwd])
-  const cwd = summaryCwd ?? fetchedCwd
+  // The live root shared by both client surfaces: the host follows the
+  // session's active linked git worktree, the list summary only seeds first paint.
+  const cwd = useSessionRoot(ctx, sessionId)
 
   // The + menu options ride a memo so the workbench does not rebuild the
   // array identity across renders that did not change the store (drag state,
