@@ -12,7 +12,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import { searchFiles } from '../src/fs-search.ts'
 import {
   bundledRgCandidates,
@@ -268,6 +268,14 @@ describe('engine argv symmetry', () => {
 })
 
 describe('bundledRgCandidates', () => {
+  // Every expectation below joins with the DIALECT OF THE PLATFORM UNDER TEST
+  // (`posix.join` for darwin, `win32.join` for win32), never the host `join`:
+  // the function is a pure function of its `platform` argument, so the host
+  // separator would make these assertions test the runner instead of the
+  // derivation (on a POSIX runner the host join silently accepts a candidate
+  // shape Windows would never see, and on Windows it demands backslashes from
+  // a POSIX case).
+
   // npm/pnpm hoist @vscode/ripgrep-<platform>-<arch> NEXT TO @deepseek-ai,
   // never under @deepseek-ai/dsh/node_modules — the derivation must point at
   // the package-manager root that really holds the binary.
@@ -277,7 +285,7 @@ describe('bundledRgCandidates', () => {
       '/opt/homebrew/bin/node',
       {}, '/Users/me', undefined,
     )
-    expect(paths).toContain(join(
+    expect(paths).toContain(posix.join(
       '/opt/homebrew/lib/node_modules',
       '@vscode/ripgrep-darwin-arm64/bin/rg',
     ))
@@ -287,7 +295,7 @@ describe('bundledRgCandidates', () => {
   // package under the CLI's own node_modules — still a candidate.
   it('also covers the non-hoisted <root>/@deepseek-ai/dsh/node_modules layout', () => {
     const paths = bundledRgCandidates('darwin', 'arm64', '/usr/local/bin/node', {}, '/Users/me', undefined)
-    expect(paths).toContain(join(
+    expect(paths).toContain(posix.join(
       '/usr/local/lib/node_modules',
       '@deepseek-ai/dsh/node_modules',
       '@vscode/ripgrep-darwin-arm64/bin/rg',
@@ -305,9 +313,24 @@ describe('bundledRgCandidates', () => {
       {}, '/Users/me',
       '/Applications/Dsh.app/Contents/Resources/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js',
     )
-    expect(paths).toContain(join(
+    expect(paths).toContain(posix.join(
       '/Applications/Dsh.app/Contents/Resources/dsh/node_modules',
       '@vscode/ripgrep-darwin-arm64/bin/rg',
+    ))
+    // The same walk under the win32 dialect: the candidate must come back in
+    // the REAL backslash shape on any host. This is the discriminating
+    // assertion for the platform-purity fix — with the host's `sep`/`dirname`
+    // a POSIX runner derived nothing from a '\'-separated start path, and a
+    // Windows runner derived nothing from the POSIX one above.
+    const win = bundledRgCandidates(
+      'win32', 'x64',
+      'C:\\Program Files\\nodejs\\node.exe',
+      {}, 'C:\\Users\\me',
+      'C:\\Tools\\Dsh\\app\\resources\\dsh\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js',
+    )
+    expect(win).toContain(win32.join(
+      'C:\\Tools\\Dsh\\app\\resources\\dsh\\node_modules',
+      '@vscode/ripgrep-win32-x64/bin/rg.exe',
     ))
   })
 
@@ -320,9 +343,10 @@ describe('bundledRgCandidates', () => {
       'C:\\Program Files\\nodejs\\node.exe',
       { APPDATA: 'C:\\Users\\me\\AppData\\Roaming' }, 'C:\\Users\\me', undefined,
     )
-    // join() renders the platform separator, so this also validates the
-    // real backslash shape on Windows CI.
-    expect(paths).toContain(join(
+    // win32.join renders the win32 separator on EVERY host, so this pins the
+    // real backslash shape here on a POSIX runner too — the platform
+    // argument decides the dialect, not the machine running the tests.
+    expect(paths).toContain(win32.join(
       'C:\\Users\\me\\AppData\\Roaming', 'npm', 'node_modules',
       '@vscode', 'ripgrep-win32-x64', 'bin', 'rg.exe',
     ))
@@ -330,15 +354,17 @@ describe('bundledRgCandidates', () => {
 
   it('covers the DSH profile layout under ~/.dsh on every platform', () => {
     const darwin = bundledRgCandidates('darwin', 'arm64', '/usr/local/bin/node', {}, '/Users/me', undefined)
-    expect(darwin).toContain(join(
+    expect(darwin).toContain(posix.join(
       '/Users/me/.dsh/profiles/node_modules',
       '@vscode', 'ripgrep-darwin-arm64', 'bin', 'rg',
     ))
-    // Windows: node:path is platform-bound, so a test on POSIX cannot pin
-    // the exact backslash shape — assert the layout structure (a real
-    // Windows CI/true-positive run pins the literal '\\' separators).
+    // Windows: the win32 dialect is selected from the platform argument, so
+    // the exact '\'-separated shape IS pinnable from a POSIX host now.
     const win = bundledRgCandidates('win32', 'x64', 'C:\\node.exe', {}, 'C:\\Users\\me', undefined)
-    expect(win.some(path => path.includes('.dsh') && path.includes('@vscode'))).toBe(true)
+    expect(win).toContain(win32.join(
+      'C:\\Users\\me', '.dsh', 'profiles', 'node_modules',
+      '@vscode', 'ripgrep-win32-x64', 'bin', 'rg.exe',
+    ))
   })
 
   it('dedupes identical candidates across derivations', () => {
@@ -356,8 +382,11 @@ describe('bundledRgCandidates', () => {
   it('drops APPDATA roots when the env var is absent (win32)', () => {
     const paths = bundledRgCandidates('win32', 'x64', 'C:\\node.exe', {}, 'C:\\Users\\me', undefined)
     expect(paths.some(path => path.includes('AppData'))).toBe(false)
-    // The fixed profile root survives.
-    expect(paths.some(path => path.includes('.dsh'))).toBe(true)
+    // The fixed profile root survives — in its real win32 shape.
+    expect(paths).toContain(win32.join(
+      'C:\\Users\\me', '.dsh', 'profiles', 'node_modules',
+      '@vscode', 'ripgrep-win32-x64', 'bin', 'rg.exe',
+    ))
   })
 })
 
@@ -427,10 +456,29 @@ describe('real engines (only when installed)', () => {
       writeFileSync(join(dir, 'src', 'util', 'util-helper.ts'), 'x')
       writeFileSync(join(dir, 'web', 'comp-util', 'component.tsx'), 'x')
       writeFileSync(join(dir, 'node_modules', 'util-dep', 'index.js'), 'x')
-      // A '*' is a literal here (--fixed-strings for fd, escaped glob for
-      // rg): it must match the file that really contains it and nothing else.
-      writeFileSync(join(dir, 'a*b.ts'), 'x')
-      writeFileSync(join(dir, 'anb.ts'), 'x')
+      // A glob metacharacter in the query is a LITERAL here (--fixed-strings
+      // for fd, escapeGlob for rg): it must match the file whose NAME really
+      // contains it and must not act as a wildcard. The pair is picked so a
+      // lost escape is CAUGHT rather than merely unexercised — the decoy is
+      // exactly what the non-literal reading would match:
+      //   POSIX  : query 'a*b',  literal 'a*b.ts',  decoy 'anb.ts'
+      //            (a glob/regex 'a*b' matches the decoy, verified on rg 15)
+      //   win32  : query 'a[b]', literal 'a[b].ts', decoy 'ab.ts'
+      // '*' (and '?', ':', '"', '<', '>', '|') are ILLEGAL file-name
+      // characters on Windows: the old fixture wrote a real 'a*b.ts' there
+      // and died with ENOENT before a single assertion ran. '[' and ']' are
+      // legal everywhere and carry the same property — 'a[b]' is a character
+      // class, so an unescaped glob matches 'ab.ts' and NOT the literal file
+      // (verified against real rg 15.2.0: unescaped '*a[b]*' returns
+      // 'ab.ts', escaped '*a\[b\]*' returns 'a[b].ts'). Deliberately NOT an
+      // UNCLOSED 'a[b': rg refuses the glob outright ("unclosed character
+      // class", exit 2), the engine gets dropped as broken and the plain-walk
+      // fallback satisfies the assertion by accident.
+      const meta = process.platform === 'win32'
+        ? { file: 'a[b].ts', decoy: 'ab.ts', query: 'a[b]' }
+        : { file: 'a*b.ts', decoy: 'anb.ts', query: 'a*b' }
+      writeFileSync(join(dir, meta.file), 'x')
+      writeFileSync(join(dir, meta.decoy), 'x')
 
       // Directory hits are derived from the file paths (rg) or read from
       // fd's directory listing: one nested match, one direct child, and the
@@ -440,8 +488,8 @@ describe('real engines (only when installed)', () => {
       expect(dirHit.dirs).toEqual(['src/util', 'web/comp-util'])
       expect(dirHit.truncated).toBe(false)
 
-      const star = await searchFiles(dir, 'a*b')
-      expect(star.matches).toEqual(['a*b.ts'])
+      const literal = await searchFiles(dir, meta.query)
+      expect(literal.matches).toEqual([meta.file])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
