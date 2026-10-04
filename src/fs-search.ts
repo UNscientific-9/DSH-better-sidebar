@@ -15,10 +15,18 @@
  * A hit can be a DIRECTORY (the list shows where matches live), so the result
  * separates them: `fs.read` refuses a directory, and the client must navigate
  * the tree for those rows instead of opening them as files.
+ *
+ * `searchFiles` (the dispatch the fs.search route calls) first tries the
+ * probed native engines (fd / rg — see search-engines.ts); when none are
+ * available or all failed at runtime it falls back to this walk (exported as
+ * `searchFilesPlain` for tests). Both paths fill the same contract.
  */
 import type { Dirent } from 'node:fs'
 import { opendir, stat } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import { homedir } from 'node:os'
+import { SKIP_DIR_NAMES, runEngine, usableEngines } from './search-engines.ts'
+import { debugLog } from './search-debug.ts'
 
 /** One search: the relative paths of the matching entries (dirs included so
  *  the client can hint where matches live) plus the truncation flag. */
@@ -47,28 +55,23 @@ const DEFAULT_MAX_VISITED = 100_000
  * Directory names that are never useful filename-search results and would
  * burn the visit budget before the walk reaches project files. Compared
  * case-insensitively so `Node_Modules` / `.GIT` stay skipped on every
- * platform. The directory itself is neither matched nor descended.
+ * platform. The name list lives in search-engines.ts (SKIP_DIR_NAMES) — the
+ * engine argvs exclude the same names so the fallback and the engines return
+ * the same result shape. An entry with a skip name is neither matched nor
+ * descended — including a worktree-style `.git` FILE, which the engine
+ * excludes cover as well.
  */
-const SEARCH_SKIP_DIRS = new Set([
-  '.git',
-  'node_modules',
-  '.pnpm-store',
-  '.yarn',
-  '.turbo',
-  '.turbopack',
-  '.next',
-  '.nuxt',
-  '.output',
-  '.cache',
-  '.parcel-cache',
-  'coverage',
-  'dist',
-  'build',
-  'out',
-  '.umi',
-  '.umi-production',
-  '.dumi',
-])
+const SEARCH_SKIP_DIRS = new Set(SKIP_DIR_NAMES)
+
+/** Shorten an absolute search root for log lines: ~/ for the config home. */
+function relRoot(root: string): string {
+  const home = process.env.DSH_HOME !== undefined && process.env.DSH_HOME.trim() !== ''
+    ? process.env.DSH_HOME
+    : homedir()
+  if (root === home) return '~'
+  const boundary = home.endsWith(sep) ? home : home + sep
+  return root.startsWith(boundary) ? `~${root.slice(home.length)}` : root
+}
 
 /**
  * Whether one matched entry is a DIRECTORY, following symlinks the way the
@@ -84,8 +87,8 @@ async function isDirectoryEntry(absolute: string, dirent: Dirent): Promise<boole
 }
 
 /**
- * Search `root` recursively for entries whose name contains `query`
- * (case-insensitive).
+ * The plain-JS fallback walk: search `root` recursively for entries whose
+ * name contains `query` (case-insensitive).
  * @param root - absolute search root.
  * @param query - the name substring; empty matches nothing.
  * @param opts - budget overrides (tests).
@@ -94,7 +97,7 @@ async function isDirectoryEntry(absolute: string, dirent: Dirent): Promise<boole
  *  short. An unreadable level is skipped (permission errors never fail the
  *  whole search).
  */
-export async function searchFiles(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
+export async function searchFilesPlain(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
   const needle = query.trim().toLowerCase()
   if (needle === '') return { matches: [], dirs: [], truncated: false }
   const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
@@ -115,8 +118,11 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
         truncated = true
         return
       }
-      // Dependency / VCS / build-output forests: never matched, never descended.
-      if (dirent.isDirectory() && SEARCH_SKIP_DIRS.has(dirent.name.toLowerCase())) continue
+      // Dependency / VCS / build-output forests: never matched, never
+      // descended. A worktree-style `.git` FILE (pointer to the real
+      // gitdir) is VCS noise too — the name check covers both shapes,
+      // parity with the engines' .git exclusion (SKIP_DIR_NAMES).
+      if (SEARCH_SKIP_DIRS.has(dirent.name.toLowerCase())) continue
       const absolute = join(dir, dirent.name)
       if (dirent.name.toLowerCase().includes(needle)) {
         const hit = join(relative(root, dir), dirent.name)
@@ -139,4 +145,37 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
   // '/' separators on every platform: the client joins onto the cwd itself.
   const normalize = (path: string): string => path.split(sep).join('/')
   return { matches: matches.sort().map(normalize), dirs: dirs.sort().map(normalize), truncated }
+}
+
+/**
+ * The fs.search dispatch: native engines first (when verified and healthy),
+ * the plain walk as fallback. Engine output is normalized onto the walk
+ * contract — root-relative, '/'-separated, sorted, and split into
+ * matches/dirs — so the route and the client stay unchanged. A blank query
+ * matches nothing and touches neither the engines nor the filesystem.
+ */
+export async function searchFiles(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
+  const needle = query.trim()
+  if (needle === '') return { matches: [], dirs: [], truncated: false }
+  const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
+  const started = performance.now()
+  for (const probe of await usableEngines()) {
+    try {
+      const result = await runEngine(probe, root, needle, maxMatches)
+      // The engine's own cap is a sentinel (maxMatches + 1) proving there is
+      // more; slice back to the caller's budget and re-derive the directory
+      // subset from what was kept, so dirs never names a dropped row.
+      const matches = [...result.paths].sort().slice(0, maxMatches)
+      const kept = new Set(matches)
+      const dirs = [...new Set(result.dirs)].filter(dir => kept.has(dir)).sort()
+      debugLog(`[dsh-search] engine=${probe.engine} bin=${probe.binary} root=${relRoot(root)} query="${needle}" hits=${matches.length} truncated=${result.truncated} ${(performance.now() - started).toFixed(0)}ms`)
+      return { matches, dirs, truncated: result.truncated }
+    } catch {
+      // runEngine already recorded the failure (broken engine or timeout);
+      // the next engine — or the walk below — gets its turn.
+    }
+  }
+  const result = await searchFilesPlain(root, query, opts)
+  debugLog(`[dsh-search] engine=plain root=${relRoot(root)} query="${needle}" hits=${result.matches.length} truncated=${result.truncated} ${(performance.now() - started).toFixed(0)}ms`)
+  return result
 }
