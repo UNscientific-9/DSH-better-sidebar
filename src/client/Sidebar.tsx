@@ -46,6 +46,7 @@ import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
+import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
@@ -220,6 +221,23 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const sessionId = snapshot.sessionId
   // 空白会话（无 user/assistant message）里宿主不渲染会话头，本插件的会话头入口不可达：
   // 由 DockFallback 自行按会话相位决定是否渲染（sidebar/dock-fallback.tsx），二者互斥。
+
+  // Unload guard: a browser refresh / tab close / navigation would drop every
+  // open unsaved draft at once. The listener is armed only while at least one
+  // draft is dirty (subscribeEditorDirty fires on every register/clear), so a
+  // clean session navigates away without a prompt. Every session's drafts
+  // count — the page is going away, not just the visible conversation. The
+  // message itself is the browser's own generic warning (custom text ignored).
+  const dirtyRevision = useSyncExternalStore(subscribeEditorDirty, () => editorDirtyRevision())
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (dirtyCount() === 0) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => { window.removeEventListener('beforeunload', onBeforeUnload) }
+  }, [dirtyRevision])
 
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
   //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
@@ -500,6 +518,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const actions: WorkbenchActions = useMemo(() => ({
     closeTab: (paneId, tabId) => {
+      // An unsaved editor draft would be dropped by the unmount — ask first.
+      // The confirmation is the SAME guard the refresh button uses, so every
+      // close path (tab X, middle click, tab context menu, the tree's
+      // close-on-rename/delete) funnels through here and warns exactly once.
+      if (!confirmDiscardDraft(tabId, t('closeUnsavedConfirm'))) return
       // Route through the service: the tab-bar close is the canonical close
       // path (finds the pane itself, fires descriptor.onClose); the session
       // scope (with its cwd) rides to the callback.

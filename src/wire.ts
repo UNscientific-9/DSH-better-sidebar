@@ -18,6 +18,7 @@ export type SidebarErrorCode =
   | 'method-error'
   | 'too-large'
   | 'fs-error'
+  | 'fs-conflict'
   | 'git-error'
   | 'job-error'
   | 'team-error'

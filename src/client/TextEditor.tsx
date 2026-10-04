@@ -19,9 +19,10 @@ import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { IconCheckOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { openSearchPanel } from '@codemirror/search'
+import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
-import { api, htmlUrl } from './api.ts'
+import { api, htmlUrl, SidebarApiError } from './api.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
@@ -59,9 +60,15 @@ export function TextEditor(props: FileViewerProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  /** The save was refused because the file changed on disk (fs-conflict). */
+  const [conflict, setConflict] = useState(false)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const savingRef = useRef(false)
+  /** The mtime the draft is based on (`null` = the file did not exist yet).
+   *  Seeded from the load, refreshed by every successful save, and reset by
+   *  the file-switch effect. */
+  const mtimeRef = useRef<number | null>(props.mtimeMs ?? null)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
   /** The search-phrases compartment of the current view (reconfigured on a
@@ -137,6 +144,9 @@ export function TextEditor(props: FileViewerProps) {
     setDraft(null)
     setDirty(false)
     setSaveState('idle')
+    setConflict(false)
+    // The freshly loaded bytes are the new save baseline.
+    mtimeRef.current = props.mtimeMs ?? null
     selectionPopup.hide()
     // hide() reads a live ref; the reset must fire only on a content (file)
     // swap, and the hook object's identity churns on every render.
@@ -372,13 +382,26 @@ export function TextEditor(props: FileViewerProps) {
     if (truncated === true) return
     savingRef.current = true
     setSaveState('saving')
-    api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
+    // Optimistic concurrency: the draft was based on the bytes read at
+    // `mtimeMs`; a file that changed on disk since is REFUSED (fs-conflict)
+    // instead of clobbering whatever wrote it (the model, another tab, an
+    // external editor). `null` = the file did not exist when loaded.
+    api.fsWrite(scope, path, view.state.doc.toString(), mtimeRef.current ?? null).then((result) => {
       savingRef.current = false
+      // Adopt the fresh baseline the host reports (absent on a stat failure —
+      // keep the old one, the next save just re-checks).
+      if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
       setDraft(null)
       setDirty(false)
+      setConflict(false)
       setSaveState('saved')
-    }).catch(() => {
+    }).catch((error: unknown) => {
       savingRef.current = false
+      if (error instanceof SidebarApiError && error.code === 'fs-conflict') {
+        setConflict(true)
+        setSaveState('idle')
+        return
+      }
       setSaveState('failed')
     })
   }
@@ -540,6 +563,26 @@ export function TextEditor(props: FileViewerProps) {
           </div>
         )}
         {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
+        {editable && (
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('searchFind')}
+            title={`${t('searchFind')} (Ctrl/Cmd+F)`}
+            onClick={() => {
+              // The panel lives in the CodeMirror surface: in preview mode the
+              // editor is hidden, so switch to edit first (the search panel is
+              // not part of the preview).
+              if (mode === 'preview' && (markdown || html)) setMode('edit')
+              const view = viewRef.current
+              if (view === null) return
+              view.focus()
+              openSearchPanel(view)
+            }}
+          >
+            <IconSearchOutlineRegular size={16} />
+          </button>
+        )}
         {editable && truncated !== true && (
           <button
             type="button"
@@ -557,6 +600,18 @@ export function TextEditor(props: FileViewerProps) {
       {editable && (
         <>
           {truncated === true && <div className={css.editorBanner}>{t('truncation')}</div>}
+          {conflict && (
+            <div className={css.editorBanner}>
+              {t('saveConflict')}
+              <button
+                type="button"
+                className={css.editorBannerAction}
+                onClick={() => { props.onReload?.() }}
+              >
+                {t('saveConflictReload')}
+              </button>
+            </div>
+          )}
           <div
             className={clsx(css.editorCm, (markdown || html) && mode === 'preview' && css.editorCmHidden)}
             ref={hostRef}
