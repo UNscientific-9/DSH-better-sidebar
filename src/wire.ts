@@ -20,6 +20,8 @@ export type SidebarErrorCode =
   | 'fs-error'
   | 'fs-conflict'
   | 'git-error'
+  | 'git-suggest-empty'
+  | 'git-suggest-error'
   | 'job-error'
   | 'team-error'
   | 'team-conflict'

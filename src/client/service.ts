@@ -27,6 +27,7 @@ import {
   type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type TabType,
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
+import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
@@ -640,6 +641,17 @@ export interface BetterSidebarService {
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
   /**
+   * Resolve one of the plugin's own host routes (`sidebar/api/fs.read`) into
+   * an absolute URL the page can fetch even when the GUI is served under a
+   * reverse-proxy directory (v0.25.0+; `features` contains 'hostRouteUrl').
+   *
+   * Never build these URLs with a leading slash yourself: that pins the
+   * request to the ORIGIN ROOT, so `/proxy/<port>/sidebar/api/…` leaves the
+   * prefix and 404s (and a desktop shell's `dsh-app://` origin is not
+   * reachable at all). `path` is taken with or without a leading slash.
+   */
+  hostRouteUrl(path: string): string
+  /**
    * Install (or clear) the native right-Sidebar write face.
    * @internal Called once by the client half; not part of the consumer API.
    */
@@ -725,6 +737,7 @@ export const SIDEBAR_FEATURES = [
   'fileIcons',
   'rightActions',
   'settingPatterns',
+  'hostRouteUrl',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -1248,6 +1261,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     updateTab,
     activateTab,
     openFile,
+    hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
   }
 }

@@ -40,7 +40,8 @@ import { LazyMermaidMarkdown } from './mermaid-lazy.tsx'
 export interface MarkdownHtmlMedia {
   scope: SessionScope
   path: string
-  origin: string
+  /** The injected transport base, reverse-proxy prefix included. */
+  baseUrl: string
 }
 
 /** Tag-like text in a rendered text node — the inline pass gate. */
@@ -77,7 +78,7 @@ function postProcessSanitized(root: Element, media: MarkdownHtmlMedia): void {
   for (const element of root.querySelectorAll('img, video, audio, source')) {
     const src = element.getAttribute('src')
     if (src === null) continue
-    element.setAttribute('src', resolveLocalMediaDest(src, media.scope, media.path, media.origin))
+    element.setAttribute('src', resolveLocalMediaDest(src, media.scope, media.path, media.baseUrl))
   }
 }
 
@@ -298,7 +299,7 @@ export function MarkdownDocument({ info, media, codeLabels }: MarkdownDocumentPr
       // stance), so rewrite local ones into /sidebar/file media URLs first —
       // the same trust fence the sanitized HTML leaves below go through.
       // Idempotent: already-absolute media URLs pass through untouched.
-      const text = rewriteLocalImageUrls(raw, media.scope, media.path, media.origin)
+      const text = rewriteLocalImageUrls(raw, media.scope, media.path, media.baseUrl)
       return {
         kind: 'markdown',
         text,
@@ -336,7 +337,7 @@ export function MarkdownDocument({ info, media, codeLabels }: MarkdownDocumentPr
     }
     return { kind: 'html', parts }
   // `media` is a memoized object in the host (TextEditor); identity tracks
-  // scope/path/origin changes so sanitization re-runs exactly when needed.
+  // scope/path/baseUrl changes so sanitization re-runs exactly when needed.
   }), [info, media])
 
   const nodes: ReactNode[] = []
