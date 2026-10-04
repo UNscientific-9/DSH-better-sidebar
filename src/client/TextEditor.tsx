@@ -23,6 +23,7 @@ import { openSearchPanel } from '@codemirror/search'
 import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { api, htmlUrl, SidebarApiError } from './api.ts'
+import { hostTransportBase } from './desktop-env.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
@@ -433,7 +434,7 @@ export function TextEditor(props: FileViewerProps) {
   /** The preview source with local image destinations rewritten to absolute
    *  media URLs (see {@link rewriteLocalImageUrls}). */
   const previewText = markdown
-    ? rewriteLocalImageUrls(previewMdText, scope, path, window.location.origin)
+    ? rewriteLocalImageUrls(previewMdText, scope, path, hostTransportBase())
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -462,7 +463,7 @@ export function TextEditor(props: FileViewerProps) {
    *  `media` identity, so a fresh object per render would re-sanitize every
    *  keystroke. */
   const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, origin: window.location.origin }),
+    () => ({ scope, path, baseUrl: hostTransportBase() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )

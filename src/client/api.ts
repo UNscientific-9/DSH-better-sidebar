@@ -1,12 +1,14 @@
 /**
- * Typed fetch wrapper over the /sidebar JSON API. Every call posts to
- * `/sidebar/api/<method>` with the sessionId and — when known — the session's
- * cwd from the client's own list summary. The host prefers its attached
- * session header and uses the summary cwd only while the session is still
- * hydrating at page load (a detached session would otherwise fail the
+ * Typed fetch wrapper over the /sidebar JSON API. Every call posts through
+ * {@link hostRouteUrl} to `/sidebar/api/<method>` with the sessionId and —
+ * when known — the session's cwd from the client's own list summary (the
+ * route keeps a reverse-proxy prefix; see host-route-url.ts). The host prefers
+ * its attached session header and uses the summary cwd only while the session
+ * is still hydrating at page load (a detached session would otherwise fail the
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { hostRouteUrl } from './host-route-url.ts'
 import { resolveSidebarPath } from './paths.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type {
@@ -78,6 +80,42 @@ export interface GitWorktree {
   changes: number
 }
 
+/** One model a provider advertises (the pinned commit-message dropdown). */
+export interface GitModelInfo {
+  /** Provider-side model id (dispatched verbatim). */
+  id: string
+  /** Display name; equals `id` when the adapter reports none. */
+  name: string
+}
+
+/** One provider route with the models its adapter advertises. */
+export interface GitModelProvider {
+  provider: string
+  name: string
+  models: GitModelInfo[]
+}
+
+/** The model catalog `git.models` answers with. It merges three sources so
+ *  the picker is usable even before a conversation has run:
+ *  - `providers`: the adapters' own catalog (`llm.listModels`),
+ *  - `recent`: routes THIS session already used (newest first),
+ *  - `default`: the harness default selection (`agent-default-model`), which
+ *    exists without any session at all.
+ *  `llm` says whether the harness exposes an LLM surface: an empty catalog is
+ *  then "no adapters registered", not "the route failed". */
+export interface GitModelCatalog {
+  llm: boolean
+  providers: GitModelProvider[]
+  recent: GitModelRoute[]
+  default?: GitModelRoute
+}
+
+/** One pinned-model value: the route the host dispatches on. */
+export interface GitModelRoute {
+  provider: string
+  model: string
+}
+
 /** One git log row. */
 export interface GitLogEntry {
   /** Short hash (7+ chars, display). */
@@ -145,7 +183,7 @@ async function readEnvelope<T>(response: Response): Promise<T> {
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`/sidebar/api/${method}`, {
+    response = await fetch(hostRouteUrl(`sidebar/api/${method}`).href, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -198,7 +236,7 @@ async function fetchUpload<T>(
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   let response: Response
   try {
-    response = await fetch(`/sidebar/upload?${params.toString()}`, {
+    response = await fetch(hostRouteUrl(`sidebar/upload?${params.toString()}`).href, {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream' },
       body,
@@ -347,6 +385,29 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  /** Push the selected checkout's branch to its upstream; git's own failure
+   *  message (no upstream, auth, non-fast-forward) crosses the wire as-is. */
+  gitPush: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.push', gitPayload(scope, worktree, {})),
+  /** Pull into the selected checkout (`--ff-only` host-side: a diverged branch
+   *  fails loudly rather than opening a merge editor nobody can answer). */
+  gitPull: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.pull', gitPayload(scope, worktree, {})),
+  /** Ask the host to generate a commit message from the pending changes: it
+   *  streams the diff through the harness LLM on the pinned route (or the
+   *  conversation's own) and answers with the route actually used.
+   *  `language` follows the sidebar's active locale ('zh' | 'en'). */
+  gitSuggestMessage: (scope: SessionScope, language: 'zh' | 'en', worktree?: string) =>
+    call<{ message: string; provider: string; model: string }>('git.suggest-message', gitPayload(scope, worktree, { language })),
+  /** The discoverable provider/model catalog for the Git card's pinned-route
+   *  setting (advisory; empty when the harness exposes no LLM service). */
+  gitModels: (scope: SessionScope, signal?: AbortSignal) =>
+    call<GitModelCatalog>('git.models', scopePayload(scope, {}), signal),
+  /** The route the NEXT commit-message suggestion would use (pinned → the
+   *  conversation's own → the harness default); absent when none resolves.
+   *  Cheaper than `gitModels`: no catalog discovery. */
+  gitCommitModel: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ route?: GitModelRoute; pinned: boolean }>('git.commit-model', scopePayload(scope, {}), signal),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
@@ -499,7 +560,7 @@ export function archiveStatus(scope: SessionScope, id: string): Promise<ArchiveB
  * scope rides along because the host answers only the session that built it.
  */
 export function archiveDownloadUrl(scope: SessionScope, id: string): string {
-  return `/sidebar/archive?${new URLSearchParams({ sessionId: scope.sessionId, id }).toString()}`
+  return hostRouteUrl(`sidebar/archive?${new URLSearchParams({ sessionId: scope.sessionId, id }).toString()}`).href
 }
 
 /** Shared URL builder for the /sidebar/file route (media vs download). */
@@ -507,7 +568,7 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
   const params = new URLSearchParams({ sessionId: scope.sessionId, path: resolveSidebarPath(scope.cwd, path) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
-  return `/sidebar/file?${params.toString()}`
+  return hostRouteUrl(`sidebar/file?${params.toString()}`).href
 }
 
 /**
@@ -519,7 +580,7 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, resolveSidebarPath(scope.cwd, path))
+  return hostRouteUrl(encodeHtmlUrl(scope.sessionId, resolveSidebarPath(scope.cwd, path))).href
 }
 
 /** One session-phase read: whether the session is still blank (no messages). */

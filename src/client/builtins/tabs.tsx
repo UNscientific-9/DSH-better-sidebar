@@ -20,6 +20,7 @@ import { t } from '../locales.ts'
 import { openSidebarFile } from '../sidebar-file.ts'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
+import { CommitModelSettings } from '../changes/CommitModelSettings.tsx'
 import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
@@ -114,6 +115,12 @@ export function builtinTabs(): readonly TabDescriptor[] {
       icon: changesTabIcon,
       order: 20,
       single: true,
+      // Custom settings panel (not a declarative toggle row): the pinned
+      // commit-message model is picked from the DISCOVERED catalog, so the
+      // option list only exists at render time.
+      settings: {
+        render: CommitModelSettings,
+      },
       badge: (_ctx, scope) => {
         const count = opCountOf(scope.sessionId)
         return count === undefined || count === 0 ? null : count
