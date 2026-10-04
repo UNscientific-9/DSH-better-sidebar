@@ -42,6 +42,7 @@ import { launchExternal } from './open-external.ts'
 import { archiveNameOf, collectZipEntries, createArchiveTasks, disambiguateArchiveNames, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
 import type { ZipEntry } from './zip.ts'
 import * as git from './git.ts'
+import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
@@ -206,6 +207,38 @@ async function resolveStatusPath(cwd: string, raw: string, selected?: string): P
 
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
+
+/**
+ * Max diff characters fed to the commit-message suggestion model. A huge
+ * change set is truncated (with an explicit marker) so the prompt stays within
+ * a reasonable context even for bulk renames or generated-file diffs.
+ */
+const SUGGEST_DIFF_LIMIT = 12_000
+
+/** Wall-clock bound of one commit-message suggestion call (same shape as the
+ *  sidechat create deadline: an abort settles the stream as a terminal
+ *  `finish`, which the route then reports). */
+const SUGGEST_TIMEOUT_MS = 30_000
+
+/**
+ * Resolve the provider/model route the current conversation runs on, read from
+ * the session's folded `request/header` — the header the NEXT request will be
+ * compared against. The commit-message suggestion reuses that route so it
+ * follows the user's configured LLM without spawning an agent: credentials and
+ * endpoints stay inside the harness's LLM service, the sidebar never touches an
+ * API key. Returns undefined while the session is unavailable or has no header
+ * yet (a cold, not-yet-attached conversation), or when the folded config does
+ * not name both fields — the route then degrades to a 503 instead of a
+ * TypeError.
+ */
+function sessionModelRoute(ctx: Context, sessionId: string): { provider: string; model: string } | undefined {
+  const config = ctx.sessions.get(sessionId)?.requestHeader()?.config
+  if (config === undefined) return undefined
+  const { provider, model } = config
+  return typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== ''
+    ? { provider, model }
+    : undefined
+}
 
 /** Text read of a file with the size cap; text encoding is detected before
  *  the NUL-based binary fallback so UTF-16/UTF-32 text remains editable.
@@ -508,6 +541,20 @@ function buildApi(
       await git.commit(cwd, message, selectedRepoOf(payload))
       return { ok: true }
     },
+    // Ship a commit without leaving the panel. Both target the selected
+    // checkout through gitCwdOf/selectedRepoOf like every other git route, and
+    // both report git's own stderr: a missing upstream (push) or a diverged
+    // branch (pull is --ff-only) is the user's to resolve in a terminal.
+    'git.push': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.push(cwd, selectedRepoOf(payload))
+      return { ok: true }
+    },
+    'git.pull': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.pull(cwd, selectedRepoOf(payload))
+      return { ok: true }
+    },
     'git.branch': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       return git.branches(cwd, selectedRepoOf(payload))
@@ -560,6 +607,91 @@ function buildApi(
       const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
+    },
+    // Commit-message suggestion: build a prompt from the pending changes and
+    // stream it through the harness's LLM service (`ctx.get('llm')`) on the
+    // route the conversation itself runs on — no agent is spawned, no session
+    // event is written, and the sidebar never sees a credential. Staged changes
+    // win because they are exactly what `git commit` records; with nothing
+    // staged the unstaged diff is used, and a lone untracked set still yields a
+    // file-list-based message. The diff is truncated so a bulk change cannot
+    // flood the model context.
+    'git.suggest-message': async (payload) => {
+      const { cwd, sessionId } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const record = payload as { language?: unknown }
+      const language = record.language === 'zh' ? 'zh' : 'en'
+      const status = await git.status(cwd, repoRoot)
+      const staged = status.entries.filter((entry) => entry.xy[0] !== ' ' && entry.xy[0] !== '?')
+      const untracked = status.entries.filter((entry) => entry.xy === '??')
+      const unstaged = status.entries.filter((entry) => entry.xy !== '??' && entry.xy[1] !== ' ' && entry.xy[1] !== '?')
+      if (staged.length === 0 && unstaged.length === 0 && untracked.length === 0) {
+        throw new SidebarError('git-suggest-empty', 'no pending changes', 400)
+      }
+      const focus = staged.length > 0
+        ? { diff: await git.diff(cwd, undefined, true, repoRoot), files: staged }
+        : unstaged.length > 0
+          ? { diff: await git.diff(cwd, undefined, false, repoRoot), files: unstaged }
+          : { diff: '', files: untracked }
+      const route = sessionModelRoute(ctx, sessionId)
+      if (route === undefined) {
+        throw new SidebarError('git-suggest-error', 'cannot resolve the session model route', 503)
+      }
+      const diffText = focus.diff.length > SUGGEST_DIFF_LIMIT
+        ? `${focus.diff.slice(0, SUGGEST_DIFF_LIMIT)}\n…(diff truncated)`
+        : focus.diff
+      const fileList = focus.files.map((entry) => entry.path).join('\n')
+      const system = language === 'zh'
+        ? '你是 git 提交信息生成助手。根据给定的文件清单与差异，生成一行 Conventional Commits 风格的中文提交信息（类型前缀：feat/fix/refactor/chore/docs/test/perf/style，必要时可附简短正文）。只输出提交信息本身，不要解释。'
+        : 'You are a git commit message assistant. Based on the given file list and diff, write a one-line Conventional Commits style commit message in English (type prefix: feat/fix/refactor/chore/docs/test/perf/style, with a short body when needed). Output only the commit message itself, no explanation.'
+      const user = language === 'zh'
+        ? `改动的文件：\n${fileList}\n\n差异：\n${diffText}`
+        : `Changed files:\n${fileList}\n\nDiff:\n${diffText}`
+      // The LLM surface is a harness-provided service this plugin does not
+      // inject, so it is read through `ctx.get` and checked before use: a
+      // deployment without it gets a clean 503 instead of a TypeError. The
+      // stream is assembled with the harness's own BlockAssembler — the same
+      // chunk-to-message algorithm the agent loop and dsh-session-title-llm
+      // use — and the message source is the plugin's own producer kind, the
+      // one DSH's v3→v4 migration derives for this plugin (a bare `plugin`
+      // kind was rejected outright in format v4).
+      const llm = ctx.get('llm') as { stream(options: GenerateOptions): AsyncIterable<StreamChunk> } | undefined
+      if (llm === undefined) {
+        throw new SidebarError('git-suggest-error', 'the harness LLM service is unavailable', 503)
+      }
+      const assembler = new BlockAssembler()
+      // A bounded call: an unresponsive provider must not hold the request (and
+      // the panel's spinner) open forever, and the abort settles the stream as
+      // a terminal `finish` this route reports like any other failure.
+      const signal = AbortSignal.timeout(SUGGEST_TIMEOUT_MS)
+      for await (const chunk of llm.stream({
+        provider: route.provider,
+        model: route.model,
+        messages: [createUserMessage({
+          content: [{ type: 'text', text: user }],
+          source: { kind: 'plugin:dsh-better-sidebar' },
+        })],
+        system,
+        maxTokens: 200,
+        signal,
+      })) {
+        assembler.push(chunk)
+      }
+      // `llm.stream()` normalizes an adapter or timeout failure into a
+      // terminal `finish` chunk instead of throwing; unchecked, the provider's
+      // real reason would surface as "the model returned an empty message".
+      const finish = assembler.finish
+      if (finish.kind === 'error' || finish.kind === 'aborted') {
+        throw new SidebarError('git-suggest-error', finish.failure.message, 502)
+      }
+      const message = assembler.blocks()
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
+        .trim()
+      if (message === '') {
+        throw new SidebarError('git-suggest-error', 'the model returned an empty message', 500)
+      }
+      return { message }
     },
     // The session's file-tool events for the changes tab's session lens
     // (and its badge): the CLIENT runtime's sessions face has no event-log

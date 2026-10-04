@@ -29,16 +29,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconChevronRightOutlineRegular, IconCodeOutlineRegular, IconCopyOutlineRegular, IconPlusOutlineRegular,
-  IconTrashOutlineRegular, Input, Menu, writeClipboard,
+  IconSparkleRegular, IconTrashOutlineRegular, Input, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
-import { api } from '../api.ts'
+import { api, SidebarApiError } from '../api.ts'
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
 import { usePolling } from '../use-polling.ts'
 import { baseName, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
-import { relativeTime, t } from '../locales.ts'
+import { relativeTime, isZh, t } from '../locales.ts'
 import type { SidebarDiffRef, SidebarStore } from '../state.ts'
 import {
   ConfirmDialog, IconButton, Notice, SectionHeader, StatusBadge, invalidateGitStatus, statusOfXY,
@@ -296,6 +296,8 @@ export function GitLens(props: GitLensProps) {
   const [logFailed, setLogFailed] = useState(false)
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  /** Whether a commit-message suggestion is streaming from the host LLM. */
+  const [suggesting, setSuggesting] = useState(false)
   /** The commit bar's ONE status line (commit / stage / discard / revert). */
   const [actionError, setActionError] = useState<string | null>(null)
   /** The lens-level error banner (refresh / branch switch / history paging). */
@@ -533,6 +535,11 @@ export function GitLens(props: GitLensProps) {
 
   const stageError = (reason: unknown): string => t('changesStageFailed', { message: errorMessage(reason) })
 
+  /** The remote actions prepend their own label: git's message for a missing
+   *  upstream or a diverged branch says nothing about which button ran. */
+  const pushError = (reason: unknown): string => `${t('pushError')}: ${errorMessage(reason)}`
+  const pullError = (reason: unknown): string => `${t('pullError')}: ${errorMessage(reason)}`
+
   const stageEntry = (path: string, staged: boolean): void => {
     void runAction(
       () => (staged ? api.gitUnstage(gitScopeNow(), path, selectedWorktree) : api.gitStage(gitScopeNow(), path, selectedWorktree)),
@@ -549,8 +556,43 @@ export function GitLens(props: GitLensProps) {
 
   const commit = (): void => {
     const message = commitMsg.trim()
-    if (message === '' || busy) return
+    if (message === '' || busy || suggesting) return
     void runAction(() => api.gitCommit(gitScopeNow(), message, selectedWorktree), errorMessage, () => { setCommitMsg('') })
+  }
+
+  /** Ask the host to write a Conventional-Commits message from the pending
+   *  changes and fill the box. The text stays editable and re-generable, and
+   *  the call is a read (no git mutation), so it neither locks the bar's git
+   *  actions nor refreshes the status — only its own `suggesting` flag. */
+  const suggestMessage = async (): Promise<void> => {
+    if (busy || suggesting) return
+    setSuggesting(true)
+    setActionError(null)
+    try {
+      const { message } = await api.gitSuggestMessage(gitScopeNow(), isZh() ? 'zh' : 'en', selectedWorktree)
+      setCommitMsg(message)
+    } catch (reason) {
+      // An empty pending set is the button's own precondition racing with a
+      // status poll, not a failure worth the provider's message.
+      setActionError(reason instanceof SidebarApiError && reason.code === 'git-suggest-empty'
+        ? t('suggestCommitEmpty')
+        : `${t('suggestCommitError')}: ${errorMessage(reason)}`)
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
+  /** Push the selected checkout's branch. Local commits and the remote ride the
+   *  SAME status line as every other git action — the failures share one cause
+   *  (no upstream, auth, divergence), so a second error channel would only
+   *  split the user's attention. */
+  const push = (): void => {
+    void runAction(() => api.gitPush(gitScopeNow(), selectedWorktree), pushError)
+  }
+
+  /** Pull into the selected checkout (fast-forward only host-side). */
+  const pull = (): void => {
+    void runAction(() => api.gitPull(gitScopeNow(), selectedWorktree), pullError)
   }
 
   /** Switching the selected checkout changes which rows are legitimate to act
@@ -879,22 +921,43 @@ export function GitLens(props: GitLensProps) {
               className={css.commitInput}
               placeholder={t('commitPlaceholder')}
               value={commitMsg}
-              disabled={busy}
+              disabled={busy || suggesting}
               onChange={(event) => { setCommitMsg(event.target.value); setActionError(null) }}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') commit()
               }}
             />
+            {/* The suggestion reads the pending changes, so it is offered
+                exactly while there is something to describe (the host also
+                refuses an empty set). The accessible name follows the state —
+                the spinner alone says nothing to a screen reader. */}
+            <IconButton
+              size="sm"
+              label={suggesting ? t('generatingCommitMessage') : t('generateCommitMessage')}
+              disabled={busy || suggesting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
+              icon={suggesting ? <span className={css.suggestSpinner} /> : <IconSparkleRegular size={14} />}
+              onClick={() => { void suggestMessage() }}
+            />
             <Button
               variant="primary"
               size="sm"
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
+              disabled={busy || suggesting || commitMsg.trim() === '' || stagedEntries.length === 0}
               onClick={commit}
             >
               {t('commit')}
             </Button>
           </div>
+          {/* The bar's ONE status line stays directly under the message row it
+              belongs to (the placement `changes-tab.spec.tsx` pins), so it keeps
+              reading as "your commit/stage/push failed" rather than as a tab-level
+              banner. */}
           {actionError !== null && <Notice kind="error" tone="inline" role="alert">{actionError}</Notice>}
+          {/* Shipping the commit without leaving the panel: two hairlines at
+              the foot of the bar, sharing its busy lock and status line. */}
+          <div className={css.commitRemoteRow}>
+            <Button variant="ghost" size="sm" disabled={busy || suggesting} onClick={push}>{t('push')}</Button>
+            <Button variant="ghost" size="sm" disabled={busy || suggesting} onClick={pull}>{t('pull')}</Button>
+          </div>
         </div>
       )}
 

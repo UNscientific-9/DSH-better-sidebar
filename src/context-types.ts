@@ -83,6 +83,12 @@ export interface SidebarSessionHeader {
   cwd?: string
 }
 
+/** The provider/model route of one session's current request header. */
+export interface SidebarSessionRoute {
+  provider?: string
+  model?: string
+}
+
 /** The host session store face (`ctx.sessions.get(id)` returns the live session). */
 export interface SidebarSessionStore {
   get(id: string): {
@@ -92,8 +98,20 @@ export interface SidebarSessionStore {
      * Read-only access — the jobs.output route replays `job_output`
      * tool/result rows from it. (The `Session.events` property this face
      * mirrored was renamed to `snapshotEvents()` in DSH 0.1.2-alpha.4.)
+     * @deprecated in the host (`new calls are prohibited`); prefer the
+     *   `requestHeader()` fold below. This face stays for the historical rows
+     *   it reads.
      */
     snapshotEvents(): readonly SidebarSessionEvent[]
+    /**
+     * The {@link SidebarSessionRoute} in force after the log's last
+     * `request/header` — the header the NEXT request will be compared
+     * against — or undefined before the first header event. The host
+     * maintains it incrementally, so this is O(new events) where a reverse
+     * scan of `snapshotEvents()` is O(log): the commit-message suggestion
+     * reads its provider/model from here instead of replaying the log.
+     */
+    requestHeader(): { config?: SidebarSessionRoute } | undefined
   } | undefined
 }
 
