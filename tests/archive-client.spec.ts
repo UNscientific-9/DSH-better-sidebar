@@ -10,6 +10,7 @@
  * These cases run the real module against a stubbed `fetch` and assert the
  * request bodies, including the session scope on every archive call.
  */
+import './browser-globals.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { archiveBuild, archiveDownloadUrl, archiveStatus, type SessionScope } from '../src/client/api.ts'
 
@@ -42,21 +43,21 @@ describe('archive client payloads', () => {
   it('posts the session scope on archive.status (the host requires BOTH keys)', async () => {
     const posted = stubFetch({ state: 'ready', done: 1, total: 1, bytes: 8 })
     await expect(archiveStatus(scope, 'job-1')).resolves.toEqual({ state: 'ready', done: 1, total: 1, bytes: 8 })
-    expect(posted).toEqual([{ url: '/sidebar/api/archive.status', body: { sessionId: 's1', cwd: '/w', id: 'job-1' } }])
+    expect(posted).toEqual([{ url: 'http://localhost/sidebar/api/archive.status', body: { sessionId: 's1', cwd: '/w', id: 'job-1' } }])
   })
 
   it('carries the scope on archive.build, plus the selection and the name', async () => {
     const posted = stubFetch({ id: 'job-2', entries: 2 })
     await expect(archiveBuild(scope, ['/w/a.ts', '/w/b.ts'], 'archive.zip')).resolves.toEqual({ id: 'job-2', entries: 2 })
     expect(posted).toEqual([{
-      url: '/sidebar/api/archive.build',
+      url: 'http://localhost/sidebar/api/archive.build',
       body: { sessionId: 's1', cwd: '/w', paths: ['/w/a.ts', '/w/b.ts'], name: 'archive.zip' },
     }])
   })
 
   it('puts the session on the download URL (it answers only the session that built it)', () => {
     // A session without a cwd keeps the URL scoped and free of an empty cwd.
-    expect(archiveDownloadUrl({ sessionId: 's9' }, 'job-9')).toBe('/sidebar/archive?sessionId=s9&id=job-9')
+    expect(archiveDownloadUrl({ sessionId: 's9' }, 'job-9')).toBe('http://localhost/sidebar/archive?sessionId=s9&id=job-9')
   })
 
   it('omits an empty cwd but never the sessionId', async () => {

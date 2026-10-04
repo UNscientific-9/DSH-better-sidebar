@@ -1,12 +1,14 @@
 /**
- * Typed fetch wrapper over the /sidebar JSON API. Every call posts to
- * `/sidebar/api/<method>` with the sessionId and — when known — the session's
- * cwd from the client's own list summary. The host prefers its attached
- * session header and uses the summary cwd only while the session is still
- * hydrating at page load (a detached session would otherwise fail the
+ * Typed fetch wrapper over the /sidebar JSON API. Every call posts through
+ * {@link hostRouteUrl} to `/sidebar/api/<method>` with the sessionId and —
+ * when known — the session's cwd from the client's own list summary (the
+ * route keeps a reverse-proxy prefix; see host-route-url.ts). The host prefers
+ * its attached session header and uses the summary cwd only while the session
+ * is still hydrating at page load (a detached session would otherwise fail the
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { hostRouteUrl } from './host-route-url.ts'
 import { resolveSidebarPath } from './paths.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type {
@@ -145,7 +147,7 @@ async function readEnvelope<T>(response: Response): Promise<T> {
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`/sidebar/api/${method}`, {
+    response = await fetch(hostRouteUrl(`sidebar/api/${method}`).href, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -198,7 +200,7 @@ async function fetchUpload<T>(
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   let response: Response
   try {
-    response = await fetch(`/sidebar/upload?${params.toString()}`, {
+    response = await fetch(hostRouteUrl(`sidebar/upload?${params.toString()}`).href, {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream' },
       body,
@@ -499,7 +501,7 @@ export function archiveStatus(scope: SessionScope, id: string): Promise<ArchiveB
  * scope rides along because the host answers only the session that built it.
  */
 export function archiveDownloadUrl(scope: SessionScope, id: string): string {
-  return `/sidebar/archive?${new URLSearchParams({ sessionId: scope.sessionId, id }).toString()}`
+  return hostRouteUrl(`sidebar/archive?${new URLSearchParams({ sessionId: scope.sessionId, id }).toString()}`).href
 }
 
 /** Shared URL builder for the /sidebar/file route (media vs download). */
@@ -507,7 +509,7 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
   const params = new URLSearchParams({ sessionId: scope.sessionId, path: resolveSidebarPath(scope.cwd, path) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
-  return `/sidebar/file?${params.toString()}`
+  return hostRouteUrl(`sidebar/file?${params.toString()}`).href
 }
 
 /**
@@ -519,7 +521,7 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, resolveSidebarPath(scope.cwd, path))
+  return hostRouteUrl(encodeHtmlUrl(scope.sessionId, resolveSidebarPath(scope.cwd, path))).href
 }
 
 /** One session-phase read: whether the session is still blank (no messages). */
