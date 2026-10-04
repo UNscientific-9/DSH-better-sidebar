@@ -492,6 +492,8 @@ export const de: Record<string, string> = {
   changesRedactBanner: "Geschwärzt",
   pluginAgentPersonaName: 'dsh-agent-persona Personas',
   pluginSentinelName: 'dsh-sentinel Wecksystem',
+  pluginFileTraceName: 'dsh-file-trace Dateiverfolgung',
+  pluginFileTraceDesc: 'Zeichnet jede Datei auf, die das Modell liest, schreibt oder bearbeitet; gruppierte Liste mit Inhalten und Zeilen-Diffs, Markdown-Lesemodus und Geheimnis-Maskierung; ohne better-sidebar eigenständiges schwebendes Fenster',
   pluginMnemeName: 'dsh-mneme Gedächtnisbibliothek',
   pluginMnemeDesc: 'Sitzungsübergreifende Gedächtnis-Engine: autoDream-Konsolidierung im Hintergrund, Sitzungszusammenfassungen und Benutzerprofil; SQLite + von Hand bearbeitbare Markdown-Spiegel, vollständig offline und privat. Registriert einen „Gedächtnisbibliothek“-Tab (Ansichten für Erinnerungen/Entitäten/Status/Einstellungen), wenn better-sidebar vorhanden ist, und behält sonst sein eigenständiges Sidebar-Panel als Fallback',
   pluginEgoBrowserName: 'ego-browser Agent-Browser',

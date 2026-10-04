@@ -508,6 +508,8 @@ export const pl: Record<string, string> = {
   changesRedactBanner: "Zredagowano",
   pluginAgentPersonaName: 'dsh-agent-persona Persony',
   pluginSentinelName: 'dsh-sentinel System wybudzania',
+  pluginFileTraceName: 'dsh-file-trace Śledzenie plików',
+  pluginFileTraceDesc: 'Zapisuje każdy plik odczytany, zapisany lub edytowany przez model; pogrupowana lista z zawartością i diffami linia po linii, tryb czytania Markdown i maskowanie sekretów; bez better-sidebar osobne okno pływające',
   pluginMnemeName: 'dsh-mneme Biblioteka pamięci',
   pluginMnemeDesc: 'Silnik pamięci międzysesyjnej: konsolidacja w tle autoDream, podsumowania sesji i profil użytkownika; SQLite + ręcznie edytowalne kopie Markdown, w pełni offline i prywatne. Rejestruje kartę «Biblioteka pamięci» (widoki pamięć/encje/status/ustawienia), gdy better-sidebar jest zainstalowany; w przeciwnym razie zachowuje niezależny panel boczny',
   pluginEgoBrowserName: 'ego-browser Przeglądarka agenta',

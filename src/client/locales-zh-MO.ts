@@ -521,6 +521,8 @@ export const zhMO: Record<string, string> = {
   changesRedactBanner: "已脫敏",
   pluginAgentPersonaName: 'dsh-agent-persona Agent 人設',
   pluginSentinelName: 'dsh-sentinel 喚醒系統',
+  pluginFileTraceName: 'dsh-file-trace 檔案追蹤',
+  pluginFileTraceDesc: '記錄模型讀取/寫入/編輯的每一個檔案，按檔案分組查看內容與逐行 diff；含 Markdown 閱讀模式與敏感內容遮罩，未裝 better-sidebar 時為獨立浮動視窗',
   pluginMnemeName: 'dsh-mneme 記憶庫',
   pluginMnemeDesc: '跨工作階段記憶引擎：autoDream 背景鞏固、工作階段總結與使用者畫像，SQLite + 可人工編輯的 Markdown 鏡像，完全離線私有；安裝 better-sidebar 後註冊「記憶庫」Tab（記憶/實體/狀態/設定四個檢視），未安裝時保留側邊欄獨立面板',
   pluginEgoBrowserName: 'ego-browser Agent 瀏覽器',

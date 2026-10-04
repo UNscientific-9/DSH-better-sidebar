@@ -506,6 +506,8 @@ export const th: Record<string, string> = {
   changesRedactBanner: "ถูกซ่อนแล้ว",
   pluginAgentPersonaName: 'dsh-agent-persona เพอร์โซนา',
   pluginSentinelName: 'dsh-sentinel ระบบปลุกเตือน',
+  pluginFileTraceName: 'dsh-file-trace ติดตามไฟล์',
+  pluginFileTraceDesc: 'บันทึกทุกไฟล์ที่โมเดลอ่าน เขียน หรือแก้ไข; รายการแบ่งตามไฟล์พร้อมเนื้อหาและ diff รายบรรทัด โหมดอ่าน Markdown และการพรางข้อมูลลับ; เป็นหน้าต่างลอยแยกเมื่อไม่มี better-sidebar',
   pluginMnemeName: 'dsh-mneme คลังหน่วยความจำ',
   pluginMnemeDesc: 'เอนจินหน่วยความจำข้ามเซสชัน: autoDream รวบรวมในเบื้องหลัง สรุปเซสชัน และโปรไฟล์ผู้ใช้ ใช้ SQLite + มิเรอร์ Markdown ที่แก้ไขด้วยมือได้ ออฟไลน์สมบูรณ์และเป็นส่วนตัว เมื่อติดตั้ง better-sidebar แล้วจะลงทะเบียนแท็บ «คลังหน่วยความจำ» (มุมมองหน่วยความจำ/เอนทิตี/สถานะ/การตั้งค่า) หากไม่ได้ติดตั้งจะคงแผงข้างอิสระไว้',
   pluginEgoBrowserName: 'ego-browser เบราว์เซอร์เอเจนต์',

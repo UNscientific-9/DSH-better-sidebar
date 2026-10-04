@@ -504,6 +504,8 @@ export const id: Record<string, string> = {
   changesRedactBanner: "Teredaksi",
   pluginAgentPersonaName: 'dsh-agent-persona Persona',
   pluginSentinelName: 'dsh-sentinel Sistem bangun',
+  pluginFileTraceName: 'dsh-file-trace Pelacakan File',
+  pluginFileTraceDesc: 'Mencatat setiap file yang dibaca, ditulis, atau diedit model; daftar terkelompok dengan konten dan diff per baris, mode baca Markdown dan penyamaran rahasia; jendela mengambang mandiri tanpa better-sidebar',
   pluginMnemeName: 'dsh-mneme Pustaka memori',
   pluginMnemeDesc: 'Mesin memori antar sesi: konsolidasi latar belakang autoDream, ringkasan sesi, dan profil pengguna; SQLite + mirror Markdown yang bisa disunting manual, sepenuhnya luring dan privat. Mendaftarkan tab «Pustaka memori» (tampilan memori/entitas/status/pengaturan) jika better-sidebar terpasang; jika tidak, panel samping mandiri tetap dipertahankan',
   pluginEgoBrowserName: 'ego-browser Peramban agen',
