@@ -19,7 +19,9 @@
  *
  * No composer DOM is mounted: `appendToDraft` then takes its documented
  * unknown-caret path (append), which keeps the captured draft exactly the
- * inserted token.
+ * inserted token — plus, for a folder, the separating space a *complete*
+ * directory insert carries (#574) so the next `@` click cannot glue two
+ * tokens together.
  */
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '../src/context-types.ts'
@@ -52,8 +54,10 @@ interface EmittedReference {
 }
 
 /**
- * A fake ctx exposing the two composer faces `referenceInChat` uses: the
- * plain `setDraft` path (folders and file fallback) and the host's
+ * A fake ctx exposing the three faces `referenceInChat` uses: the host's
+ * `workspaces` snapshot (the token is projected against `WorkspaceView.path`,
+ * matched by session membership — issue #479's base-path gap), the plain
+ * `setDraft` path (folders and file fallback) and the host's
  * `slash/input-insert-reference` event. The fake models the host's chip
  * faithfully enough for the draft to be readable — the chip's plain-text
  * projection is the mention itself (`ReferenceChipNode.getTextContent()`
@@ -87,9 +91,18 @@ function fakeComposer(initial = ''): {
       draftRev += 1
     },
   }
+  const workspaces = {
+    list: {
+      getSnapshot: (): unknown => ({ phase: 'ready', state: 'idle', items: [{ path: '/w', sessionIds: ['s1'] }] }),
+    },
+  }
   const ctx = {
     sessions: { scope: (): unknown => scope },
-    get: (name: string): unknown => (name === 'conversation' ? { input: { for: (): unknown => input } } : undefined),
+    get: (name: string): unknown => (
+      name === 'conversation'
+        ? { input: { for: (): unknown => input } }
+        : name === 'workspaces' ? workspaces : undefined
+    ),
   } as unknown as Context
   return { ctx, drafts, emitted, read: () => text }
 }
@@ -97,8 +110,9 @@ function fakeComposer(initial = ''): {
 describe('referenceInChat folder mentions', () => {
   it('quotes a folder whose path contains whitespace so the host reads it as a folder (#479)', () => {
     const composer = fakeComposer()
-    referenceInChat(composer.ctx, 's1', '/w', '/w/my dir', true)
-    expect(composer.drafts).toEqual(['@"my dir/"'])
+    referenceInChat(composer.ctx, 's1', '/w/my dir', true)
+    // The token itself is unchanged by the separator that follows it (#574).
+    expect(composer.drafts).toEqual(['@"my dir/" '])
     const draft = composer.read()
     expect(hostFolderToken(draft)).toBe('@"my dir/')
     expect(hostBubbleKind(draft)).toBe('folder')
@@ -115,22 +129,22 @@ describe('referenceInChat folder mentions', () => {
 
   it('keeps a folder without whitespace plain', () => {
     const composer = fakeComposer()
-    referenceInChat(composer.ctx, 's1', '/w', '/w/docs', true)
-    expect(composer.drafts).toEqual(['@docs/'])
+    referenceInChat(composer.ctx, 's1', '/w/docs', true)
+    expect(composer.drafts).toEqual(['@docs/ '])
     expect(hostFolderToken(composer.read())).toBe('@docs/')
     expect(hostBubbleKind(composer.read())).toBe('folder')
   })
 
   it('keeps the relative-root spelling for the cwd itself', () => {
     const composer = fakeComposer()
-    referenceInChat(composer.ctx, 's1', '/w', '/w', true)
-    expect(composer.drafts).toEqual(['@./'])
+    referenceInChat(composer.ctx, 's1', '/w', true)
+    expect(composer.drafts).toEqual(['@./ '])
   })
 
   it('skips a folder path the mention grammar cannot represent (same guard as files)', () => {
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const composer = fakeComposer()
-    referenceInChat(composer.ctx, 's1', '/w', '/we"ird dir', true)
+    referenceInChat(composer.ctx, 's1', '/we"ird dir', true)
     expect(composer.drafts).toEqual([])
     expect(consoleWarn).toHaveBeenCalledTimes(1)
     consoleWarn.mockRestore()
@@ -140,7 +154,7 @@ describe('referenceInChat folder mentions', () => {
 describe('referenceInChat file mentions (unchanged)', () => {
   it('inserts a file with whitespace as one quoted chip reference', () => {
     const composer = fakeComposer()
-    referenceInChat(composer.ctx, 's1', '/w', '/w/my notes.md', false)
+    referenceInChat(composer.ctx, 's1', '/w/my notes.md', false)
     expect(composer.emitted.map((reference) => reference.ref)).toEqual(['@"my notes.md"'])
     expect(composer.drafts).toEqual([]) // the chip path, not a plain append
     expect(composer.read()).toBe('@"my notes.md"')
@@ -149,7 +163,7 @@ describe('referenceInChat file mentions (unchanged)', () => {
 
   it('inserts a file without whitespace unchanged', () => {
     const composer = fakeComposer()
-    referenceInChat(composer.ctx, 's1', '/w', '/w/notes.md', false)
+    referenceInChat(composer.ctx, 's1', '/w/notes.md', false)
     expect(composer.emitted.map((reference) => reference.ref)).toEqual(['@notes.md'])
     expect(composer.read()).toBe('@notes.md')
   })
