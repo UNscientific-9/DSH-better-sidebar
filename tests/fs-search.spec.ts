@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { compileExcludePatterns } from '../src/exclude-patterns.ts'
 import { searchFiles } from '../src/fs-search.ts'
 
 /**
@@ -87,6 +88,30 @@ describe('fs-search', () => {
       expect((await searchFiles(dir, 'readme')).matches).toEqual(['README.md'])
       expect((await searchFiles(dir, 'config')).matches).toEqual([])
       expect((await searchFiles(dir, '.git')).matches).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the exclude probe removes entries and stops descent (in lockstep with the tree)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-exclude-'))
+    try {
+      mkdirSync(join(dir, 'third_party', 'pkg'), { recursive: true })
+      mkdirSync(join(dir, 'src'))
+      writeFileSync(join(dir, 'third_party', 'pkg', 'index.ts'), 'dep')
+      writeFileSync(join(dir, 'third_party', 'index.ts'), 'dep')
+      writeFileSync(join(dir, 'src', 'index.ts'), 'code')
+      writeFileSync(join(dir, 'debug.log'), 'log')
+      const exclude = compileExcludePatterns(['third_party', '*.log'], dir)
+      // Excluded names never match AND their subtrees are never walked.
+      expect((await searchFiles(dir, 'index', { exclude })).matches).toEqual(['src/index.ts'])
+      expect((await searchFiles(dir, 'log', { exclude })).matches).toEqual([])
+      // A directory hit disappears with the exclusion (no dangling nav row).
+      expect((await searchFiles(dir, 'third_party', { exclude })).dirs).toEqual([])
+      // Without the probe the junk level matches and is descended.
+      expect((await searchFiles(dir, 'index')).matches)
+        .toEqual(['src/index.ts', 'third_party/index.ts', 'third_party/pkg/index.ts'])
+      expect((await searchFiles(dir, 'third_party')).dirs).toEqual(['third_party'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
