@@ -91,7 +91,9 @@ describe('createWorkspaceFile', () => {
     for (const name of ['console.txt', 'conx', 'COM10', 'LPT', 'null.md', 'auxiliary']) {
       await expect(createWorkspaceFile({ cwd: root, path: root, name })).resolves.toEqual({ path: join(root, name) })
     }
-    expect(await readdir(root)).toEqual(['COM10', 'LPT', 'auxiliary', 'console.txt', 'conx', 'null.md'])
+    // `readdir` order is filesystem-defined (Windows returns a different order than
+    // ext4/APFS), so compare the sorted name set instead of the raw listing.
+    expect((await readdir(root)).sort()).toEqual(['COM10', 'LPT', 'auxiliary', 'console.txt', 'conx', 'null.md'])
   })
 
   it('refuses an existing destination with the same conflict code as rename and mkdir', async () => {
