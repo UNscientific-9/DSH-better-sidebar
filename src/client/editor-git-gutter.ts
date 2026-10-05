@@ -19,8 +19,10 @@
  *    file tree already uses for its rows.
  *  - Blame is fetched ON HOVER for the hovered line only, memoized per
  *    session + path + line. Scrolling never re-requests a range, a file is
- *    never prefetched, and the memo is dropped when the file's change set is
- *    recomputed (a new diff means new commits may be involved).
+ *    never prefetched, and the memo is dropped whenever the file's change set
+ *    is recomputed OR cleared — a new diff means new commits may be involved,
+ *    and a vanished diff (the file was committed or discarded) must not leave
+ *    the pre-commit line answering the next hover.
  */
 import { useEffect, useMemo, useState } from 'react'
 import { RangeSet, Compartment, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
@@ -247,7 +249,7 @@ const blameCache = new Map<string, Promise<GitBlameLine | null>>()
 const blameKey = (sessionId: string, path: string, line: number): string =>
   `${sessionId}\u0000${path}\u0000${String(line)}`
 
-/** Drop the memo of one file (its change set was recomputed). */
+/** Drop the memo of one file (its change set was recomputed or cleared). */
 export function forgetBlame(sessionId: string, path: string): void {
   const prefix = `${sessionId}\u0000${path}\u0000`
   for (const key of [...blameCache.keys()]) {
@@ -321,14 +323,18 @@ export function useEditorGitGutter(options: EditorGitGutterOptions): ReadonlyMap
   const [kinds, setKinds] = useState<ReadonlyMap<number, GitLineKind>>(EMPTY_KINDS)
 
   useEffect(() => {
+    // A fresh change set invalidates the file's blame memo (the lines that
+    // moved may now belong to other commits) — and so does a change set that
+    // DISAPPEARS, which is the branch below: once the file is committed or
+    // discarded there is no diff to recompute, so an invalidation kept inside
+    // the enabled branch would never run and the next hover would be answered
+    // with the pre-commit line (the '[Not Committed Yet]' placeholder too).
+    forgetBlame(scope.sessionId, path)
     if (!enabled || entry === undefined) {
       setKinds(EMPTY_KINDS)
       return undefined
     }
     let cancelled = false
-    // A fresh change set invalidates the file's blame memo (the lines that
-    // moved may now belong to other commits).
-    forgetBlame(scope.sessionId, path)
     if (entry.tone === 'untracked') {
       setKinds(addedLineKinds(content === undefined || content === '' ? 0 : content.split('\n').length))
       return undefined
