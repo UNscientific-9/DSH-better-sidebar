@@ -42,6 +42,7 @@ import {
   IconStopFillRegular,
   MarkdownText,
   Menu,
+  MarkdownDelegateProvider,
   ReadBlock,
   StateDot,
   TerminalBlock,
@@ -51,6 +52,7 @@ import {
   type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
+import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry, SidebarSessionEvent } from '../context-types.ts'
 import {
@@ -366,19 +368,21 @@ function toolLeading(name: string, failed: boolean): React.ReactNode {
   }
 }
 
-/** One row renderer (React keys ride the source event seq). */
-function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNode {
+/** One row renderer (React keys ride the source event seq). `rewrite` is the
+ *  surface's markdown link pass — the rows are model prose, so a relative link
+ *  resolves against the session cwd (see use-markdown-surface). */
+function renderRow(row: SidechatTranscriptRow, labels: RowLabels, rewrite: (text: string) => string): React.ReactNode {
   switch (row.kind) {
     case 'user':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatUser}>
-          <MarkdownText {...markdownTextProps(row.text, labels)} />
+          <MarkdownText {...markdownTextProps(rewrite(row.text), labels)} />
         </div>
       )
     case 'assistant':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatAssistant}>
-          <MarkdownText {...markdownTextProps(row.text, labels)} />
+          <MarkdownText {...markdownTextProps(rewrite(row.text), labels)} />
         </div>
       )
     case 'reasoning':
@@ -531,6 +535,18 @@ export function SideChatView(props: {
   const prevRowsRef = useRef<SidechatTranscriptRow[]>([])
   const controllerRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  /** Heading slugs, anchor jumps and `.md` link claiming for the transcript (a
+   *  prose surface: it renders no file of its own, so a relative link target
+   *  resolves against the session cwd). */
+  const { surfaceRef: chatSurfaceRef, openFile: openChatFile, rewrite: rewriteChatText } = useMarkdownSurface({
+    ctx,
+    sessionId: scope.sessionId,
+    cwd: scope.cwd,
+  })
+  const transcriptRef = useCallback((element: HTMLDivElement | null) => {
+    scrollRef.current = element
+    chatSurfaceRef(element)
+  }, [chatSurfaceRef])
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
 
   const summary = threadId === undefined ? undefined : list.byId[threadId]
@@ -980,8 +996,13 @@ export function SideChatView(props: {
         && <div className={css.sidechatHint}>{t('sideChatPendingDrop')}</div>}
       {saved && <div className={css.sidechatHint}>{t('sideChatSaved')}</div>}
       {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
-      <div ref={scrollRef} className={css.sidechatScroll}>
-        {rows.map(row => renderRow(row, rowLabels))}
+      <div ref={transcriptRef} className={css.sidechatScroll}>
+        {/* The host delegate is what makes a local markdown link in a row
+            clickable at all (see use-markdown-surface), scoped to this
+            transcript so nothing outside it is claimed. */}
+        <MarkdownDelegateProvider openFile={openChatFile}>
+          {rows.map(row => renderRow(row, rowLabels, rewriteChatText))}
+        </MarkdownDelegateProvider>
       </div>
       {running && (
         <div className={css.sidechatStatus}>

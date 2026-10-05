@@ -28,8 +28,10 @@ function isRemoteUrl(dest: string): boolean {
  * (POSIX `/`), its Windows drive (`C:\`), or its UNC `\\server\share`
  * prefix. The host's `requireAbsolute` (`path.resolve`) normalizes anyway,
  * but producing a canonical path here keeps the `/sidebar/file` URL clean.
+ * Shared with the markdown navigation resolver (`markdown-navigation.ts`),
+ * which canonicalizes a claimed link target the same way.
  */
-function normalizeLocalPath(path: string): string {
+export function normalizeLocalPath(path: string): string {
   const drive = /^([A-Za-z]:)[\\/]/.exec(path)?.[1]
   const body = drive !== undefined ? path.slice(drive.length) : path
   const parts = body.split(/[\\/]+/).filter((segment) => segment !== '' && segment !== '.')

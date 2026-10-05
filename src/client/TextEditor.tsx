@@ -20,7 +20,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
-import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import {
   applyGitLineKinds,
@@ -32,6 +32,7 @@ import { api, htmlUrl, SidebarApiError } from './api.ts'
 import { hostTransportBase } from './desktop-env.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { rewriteLocalImageUrls } from './markdown-images.ts'
+import { rewriteLocalMarkdownLinks } from './markdown-navigation.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
@@ -42,6 +43,7 @@ import { useSelectionPopup } from './selection-popup.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
+import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { localeSignature, t } from './locales.ts'
@@ -92,7 +94,24 @@ export function TextEditor(props: FileViewerProps) {
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
   /** The markdown preview container (selection-containment + line lookup). */
-  const mdRef = useRef<HTMLDivElement>(null)
+  const mdRef = useRef<HTMLDivElement | null>(null)
+  /** Heading slugs, anchor jumps and `.md` link claiming for the preview (the
+   *  delegate provider wrapped around the markdown is its claim boundary — see
+   *  use-markdown-surface). */
+  const { surfaceRef: markdownSurfaceRef, openFile: openSurfaceFile } = useMarkdownSurface({
+    ctx,
+    sessionId: scope.sessionId,
+    cwd: scope.cwd,
+    path,
+  })
+  /** One ref callback for the preview container: the selection/scroll code
+   *  above keeps its object ref, the surface installer gets the same element.
+   *  A stable identity matters — a fresh callback on every render would make
+   *  React re-attach (and re-scan) on every render. */
+  const previewRef = useCallback((element: HTMLDivElement | null) => {
+    mdRef.current = element
+    markdownSurfaceRef(element)
+  }, [markdownSurfaceRef])
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
   /** The uncommitted-change gutter (issue #212): the `code` viewer only,
@@ -497,9 +516,16 @@ export function TextEditor(props: FileViewerProps) {
   }, [mode, previewMdText])
 
   /** The preview source with local image destinations rewritten to absolute
-   *  media URLs (see {@link rewriteLocalImageUrls}). */
+   *  media URLs (see {@link rewriteLocalImageUrls}) and the local link
+   *  destinations prepared for the host delegate (see
+   *  {@link rewriteLocalMarkdownLinks}; the split renderer runs the same two
+   *  passes per markdown run, and both are idempotent). */
   const previewText = markdown
-    ? rewriteLocalImageUrls(previewMdText, scope, path, hostTransportBase())
+    ? rewriteLocalMarkdownLinks(
+      rewriteLocalImageUrls(previewMdText, scope, path, hostTransportBase()),
+      path,
+      scope.cwd,
+    )
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -687,7 +713,7 @@ export function TextEditor(props: FileViewerProps) {
       {markdown && mode === 'preview' && (
         <div
           className={css.editorMd}
-          ref={mdRef}
+          ref={previewRef}
           onMouseUp={handlePreviewMouseUp}
           onScroll={(event) => {
             const el = event.currentTarget
@@ -736,11 +762,16 @@ export function TextEditor(props: FileViewerProps) {
               (sticky, zero-height — first child so it pins from the very
               top) once the document has enough headings. */}
           <MdToc />
-          {htmlInfo !== null
-            ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
-            : hasMermaid
-              ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
-              : <MarkdownText {...markdownTextProps(previewText, codeLabels)} />}
+          {/* The host delegate makes the preview's local markdown links
+              clickable at all (without it the renderer degrades them to plain
+              text) and routes them through this surface's own open path. */}
+          <MarkdownDelegateProvider openFile={openSurfaceFile}>
+            {htmlInfo !== null
+              ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
+              : hasMermaid
+                ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
+                : <MarkdownText {...markdownTextProps(previewText, codeLabels)} />}
+          </MarkdownDelegateProvider>
         </div>
       )}
       {html && mode === 'preview' && (
