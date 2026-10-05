@@ -457,6 +457,15 @@ export interface OpenTabSeed {
    * `'side'` only changes where a path seed lands.
    */
   target?: 'right' | 'bottom' | 'side'
+  /**
+   * Whether the open may FOCUS what it opens (`target: 'right'` only; the
+   * bottom workbench already lands everything in its own pane). Defaults to
+   * true — every consumer-facing open means "show me this". A background
+   * activation passes `false` so the reader's page survives: the host places
+   * the tab without the focus op, and the caller raises the unread dot in its
+   * place (see `src/client/sidebar/use-host-feeds.ts`).
+   */
+  reveal?: boolean
 }
 
 /**
@@ -493,6 +502,13 @@ export interface SidebarSurface {
   openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean; preferNewPane?: boolean }): void
   /** The file address of one path (the native surface owns the grammar). */
   fileAddress(sessionId: string, cwd: string | undefined, path: string): string
+  /**
+   * The plugin tab type one native tab id belongs to, or undefined when this
+   * session has no such tab. Used to clear the unread dot when an activation
+   * lands on the native surface — the service cannot see the native records
+   * itself, and a tab id is not a type.
+   */
+  tabTypeOf?(sessionId: string, tabId: string): string | undefined
   /** Close one native tab; the closed record's type/title/meta, or undefined when the id is not native. */
   close(sessionId: string, tabId: string): { type: string; title: string; meta?: unknown } | undefined
   /**
@@ -652,6 +668,18 @@ export interface BetterSidebarService {
    */
   hostRouteUrl(path: string): string
   /**
+   * Retire one session's "new page" dot for a tab type — the reader just
+   * looked at that page. A type that is not marked is a strict no-op, so a
+   * carrier can call this on every visibility change without churning the
+   * store.
+   *
+   * The mark itself is raised by the plugin's own background activation; this
+   * is the retirement half a carrier that renders a marked tab needs. The
+   * bottom workbench retires its marks through {@link activateTab} instead
+   * (a click there IS an activation), so the native chip is the caller.
+   */
+  clearUnread(type: TabType, sessionId: string): void
+  /**
    * Install (or clear) the native right-Sidebar write face.
    * @internal Called once by the client half; not part of the consumer API.
    */
@@ -769,6 +797,20 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const subscribe = (listener: () => void): (() => void) => {
     listeners.add(listener)
     return () => { listeners.delete(listener) }
+  }
+
+  /**
+   * Retire one session's unread mark for a tab type. The argument ORDER is
+   * the service's own `(type, sessionId)` — this is the implementation of
+   * {@link BetterSidebarService.clearUnread} and takes its parameter list
+   * verbatim, so the facade cannot silently swap them.
+   *
+   * Named-session aware on purpose (see {@link SidebarStore.clearUnread}): the
+   * current session publishes the change so both carriers re-render, while a
+   * session that is not on screen is updated in place without waking the shell.
+   */
+  const clearUnreadFor = (type: TabType, sessionId: string): void => {
+    store.clearUnread(type, sessionId)
   }
 
   const registerTab = (descriptor: TabDescriptor): (() => void) => {
@@ -988,6 +1030,11 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // Multi-instance kinds (terminal / browser / side chat / diff) mint a
       // fresh tab per open; single-instance kinds focus the existing one.
       const revealIfOpened = descriptor.createTab === undefined
+      // Whether this open may FOCUS what it lands on. `target: 'side'` never
+      // does (it is a split beside the reader's page), and a background
+      // activation asks for the same without the split (`reveal: false`),
+      // which is what keeps a gated auto-open from taking the column over.
+      const reveal = seed.reveal !== false && !side
       // A url seed lands on `path`: the browser tab reads its address from
       // there and persists navigations back to the same field
       // (BrowserView's `persist`), so dropping the seed left an opened tab
@@ -1014,12 +1061,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
           surface.openResource({
             sessionId: targetSessionId,
             address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
-            revealIfOpened: side ? false : true,
+            revealIfOpened: reveal,
             ...(side ? { preferNewPane: true } : {}),
           })
         } else {
           // The path-less editor window IS the file explorer.
-          surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: true })
+          surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: reveal })
         }
       } else {
         // A component type's path seed stays on the page open (regression
@@ -1035,7 +1082,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
             ...(seed.diff === undefined ? {} : { diff: seed.diff }),
             ...(synthetic.meta === undefined ? {} : { meta: synthetic.meta }),
           },
-          revealIfOpened: side ? false : revealIfOpened,
+          revealIfOpened: reveal && revealIfOpened,
           ...(side ? { preferNewPane: true } : {}),
         })
       }
@@ -1201,6 +1248,18 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   /** Activate an open tab (the tab-bar activation path; fires onActivate). */
   const activateTab = (tabId: string, scope?: SessionScope): void => {
+    // Activating a tab is the reader LOOKING at that page, so it retires the
+    // unread dot wherever the tab lives. Resolved before the activation
+    // because the native branch below returns early: the record (and therefore
+    // the type) is dropped when the tab unmounts. Nothing is marked unread in
+    // the target session by a cross-session activation (the service's own
+    // background triggers mark the session they are actually running for), so
+    // an unknown type clears nothing.
+    const activatedSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+    if (activatedSessionId !== undefined) {
+      const type = surface?.tabTypeOf?.(activatedSessionId, tabId)
+      if (type !== undefined) clearUnreadFor(type, activatedSessionId)
+    }
     if (surface?.activate(tabId, scope?.sessionId) === true) return
     let activated: SidebarTab | undefined
     store.reduce((state) => {
@@ -1214,6 +1273,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     if (activated !== undefined) {
       const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
       if (sessionId !== undefined) {
+        clearUnreadFor(activated.type, sessionId)
         const descriptor = tabs.get(activated.type)
         // An explicit scope (with its optional cwd) rides to the callback.
         safeCall(() => descriptor?.onActivate?.(activated!, scope ?? { sessionId }))
@@ -1263,6 +1323,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     openFile,
     hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
+    clearUnread: clearUnreadFor,
   }
 }
 

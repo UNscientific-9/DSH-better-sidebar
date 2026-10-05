@@ -75,14 +75,31 @@ interface NativeColumnFace {
  * alone. A column already on the Tasks page is re-focused in place as before
  * (single-instance semantics make it a no-op).
  *
+ * Leaving it at that would DROP the event: the page the background work
+ * belongs to must still be created, it just may not take the column over.
+ * So a gated activation opens the same page with `reveal: false` — the host
+ * places the tab without focusing it (`openContent`'s `revealIfOpened: false`
+ * suppresses exactly the focus op; the page kind has no focus path of its own,
+ * and re-opening a page that IS already there is a focus either way, which is
+ * precisely what the gate refuses) — and marks the tab type unread, which is
+ * the dot the reader follows to it later. The two halves are one change:
+ * without the dot the tab would be created invisibly, and without the open
+ * there would be nothing for the dot to point at.
+ *
  * @param ctx - the client context (`ctx.sidebarRight` + `ctx.betterSidebar`).
+ * @param store - the plugin store (the unread dot lives in the session state).
  * @param sessionId - the session the feed reports the activity for.
  * @param options.background - `true` for background activity (refuses a
  *   column the reader is using, parks on narrow viewports); `false` for the
  *   explicit topology jump-back, which is a user gesture and always leaves the
  *   column as the host expanded it.
  */
-function activateTasksPage(ctx: Context, sessionId: string, options: { background: boolean }): void {
+function activateTasksPage(
+  ctx: Context,
+  store: SidebarStore,
+  sessionId: string,
+  options: { background: boolean },
+): void {
   const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
   // The face acts on the MOUNTED session: both gates below are only meaningful
   // (and only safe) when the activation targets the one on screen. "On screen"
@@ -94,7 +111,15 @@ function activateTasksPage(ctx: Context, sessionId: string, options: { backgroun
   // Do not take over the page the reader is looking at (see the docblock).
   if (options.background && onScreen && column?.isExpanded?.() === true) {
     const shown = column.active?.()
-    if (shown !== undefined && shown.kind !== 'subagent') return
+    if (shown !== undefined && shown.kind !== 'subagent') {
+      // The page is still created — the event is never dropped — but it lands
+      // in the background and raises the dot instead of the column.
+      ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent'), reveal: false })
+      // The dot belongs to the session the work is in, which is the current
+      // one (the gate above proved this seat is the mounted session).
+      store.markUnread('subagent')
+      return
+    }
   }
   const park = options.background
     && onScreen
@@ -233,7 +258,7 @@ export function useHostFeeds(feeds: {
       if (!store.getPrefs().autoOpenSubagent) return
       if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      activateTasksPage(ctx, sessionId, { background: true })
+      activateTasksPage(ctx, store, sessionId, { background: true })
     }, AUTO_OPEN_DEBOUNCE_MS)
     autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
@@ -297,7 +322,7 @@ export function useHostFeeds(feeds: {
     if (!store.getPrefs().autoOpenJobs) return
     if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    activateTasksPage(ctx, sessionId, { background: true })
+    activateTasksPage(ctx, store, sessionId, { background: true })
   }, [jobsService, jobsSnapshot, sessionId, store, ctx])
 
   /**
@@ -317,7 +342,7 @@ export function useHostFeeds(feeds: {
     const pending = subagentJumpRef.current
     if (pending === undefined || sessionId !== pending) return
     subagentJumpRef.current = undefined
-    activateTasksPage(ctx, sessionId, { background: false })
+    activateTasksPage(ctx, store, sessionId, { background: false })
   }, [sessionId, store, ctx])
 
   return { subagentJumpRef }

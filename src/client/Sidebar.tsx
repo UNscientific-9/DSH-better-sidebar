@@ -33,6 +33,7 @@ import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts
 import { DockFallback } from './sidebar/dock-fallback.tsx'
 import {
   BOTTOM_MIN, CONVERSATION_MIN,
+  isUnread,
   leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
   setBottomHeight, toggleBottomPanel, toggleExpanded,
   type DropZone, type SidebarStore, type SidebarTab,
@@ -658,6 +659,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }
 
   /**
+   * Whether one workbench tab carries the unread dot: its page holds
+   * background work the reader has not looked at yet. Reads the SAME session
+   * state the native chip does, so the two carriers cannot disagree, and the
+   * shell re-renders on the store change that sets or retires the mark.
+   */
+  const isTabUnread = (tab: SidebarTab): boolean => isUnread(state, tab.type)
+
+  /**
    * The active tab's right-aligned action area from the tab-type registry:
    * a descriptor that declares `rightActions` supplies its own toolbar
    * rendered at its pane's tab-strip right end. The open `tab` and its
@@ -795,6 +804,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            isTabUnread={isTabUnread}
             getTabRightActions={tabRightActionsOf}
             onRevealInFileManager={revealTabFile}
           />
