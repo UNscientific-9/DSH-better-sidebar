@@ -21,6 +21,7 @@ import { act } from 'react-dom/test-utils'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { TextEditor } from '../src/client/TextEditor.tsx'
+import { DiffPane } from '../src/client/changes/DiffPane.tsx'
 import { attachLocale } from '../src/client/locales.ts'
 import { createSidebarStore, allLeaves } from '../src/client/state.ts'
 import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
@@ -50,13 +51,13 @@ interface Mounted {
   unmount: () => void
 }
 
-/**
- * Mount the real TextEditor on one markdown file, backed by the plugin's own
- * sidebar service — so a claimed link's open is observed the way the app
- * observes it (a tab landing in the store), not through a stub.
- */
-function mountEditor(content: string, path: string): Mounted {
-  attachLocale(new FakeLocale())
+/** The sidebar service + ctx one surface is mounted with, and a reader of the
+ *  tabs an open landed: the app's own observation point, not a stub. */
+function sidebarCtx(): {
+  ctx: Context
+  store: ReturnType<typeof createSidebarStore>
+  tabs: () => { type: string; path?: string }[]
+} {
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
   // openTab refuses a type nobody registered.
@@ -67,6 +68,17 @@ function mountEditor(content: string, path: string): Mounted {
     get: (name: string) => name === 'betterSidebar' ? service : undefined,
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: { [SESSION]: { cwd: '/p' } } }) } },
   } as unknown as Context
+  return { ctx, store, tabs: () => allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs) }
+}
+
+/**
+ * Mount the real TextEditor on one markdown file, backed by the plugin's own
+ * sidebar service — so a claimed link's open is observed the way the app
+ * observes it (a tab landing in the store), not through a stub.
+ */
+function mountEditor(content: string, path: string): Mounted {
+  attachLocale(new FakeLocale())
+  const { ctx, store, tabs } = sidebarCtx()
   const props: FileViewerProps = {
     ctx,
     store,
@@ -77,11 +89,39 @@ function mountEditor(content: string, path: string): Mounted {
     content,
   }
   const mounted = renderRoot(createElement(TextEditor, props))
-  return {
-    container: mounted.container,
-    tabs: () => allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs),
-    unmount: mounted.unmount,
-  }
+  return { container: mounted.container, tabs, unmount: mounted.unmount }
+}
+
+/**
+ * Mount the changes tab's inline preview on one markdown file op and flip it to
+ * reading mode — the plugin's SECOND markdown surface, whose base is the op
+ * target's own path.
+ */
+function mountReadingPane(path: string, markdown: string): Mounted {
+  attachLocale(new FakeLocale())
+  const { ctx, tabs } = sidebarCtx()
+  const mounted = renderRoot(createElement(DiffPane, {
+    target: {
+      kind: 'op',
+      path,
+      op: {
+        callId: 'c1', kind: 'read', path, time: 0, running: false, isError: false,
+        read: `<content>1: ${markdown}\n</content>`,
+      },
+    },
+    ctx,
+    scope: { sessionId: SESSION, cwd: '/p' },
+    height: 300,
+    onHeightCommit: () => {},
+    onClose: () => {},
+    onExpand: () => {},
+  }))
+  // Reading mode is off by default: the raw diff is what a change shows first.
+  const toggle = [...mounted.container.querySelectorAll('button')]
+    .find(button => button.textContent === 'Reading')
+  if (toggle === undefined) throw new Error('reading toggle not found')
+  click(toggle)
+  return { container: mounted.container, tabs, unmount: mounted.unmount }
 }
 
 /** The plugin's markdown surface container inside a mounted editor. */
@@ -271,6 +311,37 @@ describe('the markdown preview surface', () => {
     expect(scrollTop()).toBe(0)
     expect(scrollTo).not.toHaveBeenCalled()
     expect(mounted.tabs()).toEqual([])
+    mounted.unmount()
+  })
+
+  it('opens a line destination without treating its line as an anchor', async () => {
+    // `#L24` is the host's own grammar (the parser hands it over as
+    // `options.line`), so the rewriter must leave it alone and the open must
+    // not park a fragment named "L24".
+    const source = mountEditor('[jump](./other.md#L24)\n', '/p/docs/README.md')
+    const link = fileLink(surfaceOf(source.container), './other.md')
+    expect(link).not.toBeNull()
+    click(link!)
+    expect(source.tabs().map(tab => tab.path)).toEqual(['/p/docs/other.md'])
+    source.unmount()
+
+    const target = mountEditor('## L24 is not a heading\n', '/p/docs/other.md')
+    const scrollTop = watchScrollTop(surfaceOf(target.container))
+    stubRectTop(surfaceOf(target.container).querySelector('h2')!, 300)
+    await flushMicrotasks()
+    expect(scrollTop()).toBe(0)
+    target.unmount()
+  })
+
+  it('claims links in the changes reading pane too, based on the op target path', () => {
+    // The second surface: its markdown comes from a tool op, and its relative
+    // base is the read file's own path.
+    const mounted = mountReadingPane('/p/docs/README.md', 'See [other](./other.md).')
+    const surface = surfaceOf(mounted.container)
+    const link = fileLink(surface, './other.md')
+    expect(link).not.toBeNull()
+    click(link!)
+    expect(mounted.tabs().map(tab => tab.path)).toEqual(['/p/docs/other.md'])
     mounted.unmount()
   })
 
