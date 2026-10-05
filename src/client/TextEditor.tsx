@@ -13,7 +13,7 @@
  * the FileViewerProps toolbar callbacks so the host's path-input header
  * renders the controls instead.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
@@ -22,6 +22,12 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
+import {
+  applyGitLineKinds,
+  CmGitGutterCompartment,
+  useEditorGitGutter,
+  type GitGutterHost,
+} from './editor-git-gutter.ts'
 import { api, htmlUrl, SidebarApiError } from './api.ts'
 import { hostTransportBase } from './desktop-env.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
@@ -75,6 +81,9 @@ export function TextEditor(props: FileViewerProps) {
   /** The search-phrases compartment of the current view (reconfigured on a
    *  language switch — the panel copy is baked into the EditorState). */
   const searchPhrasesRef = useRef<CmSearchPhrases | null>(null)
+  /** The uncommitted-change gutter compartment (issue #212; reconfigured on a
+   *  setting flip instead of rebuilding the view). */
+  const gitCompRef = useRef<CmGitGutterCompartment | null>(null)
   /** The effective UI language (DSH locale id + better-locale override id).
    *  Read during render and subscribed below: the tab-cell memo only
    *  compares the DSH locale revision, so a better-locale override switch
@@ -86,6 +95,30 @@ export function TextEditor(props: FileViewerProps) {
   const mdRef = useRef<HTMLDivElement>(null)
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
+  /** The uncommitted-change gutter (issue #212): the `code` viewer only,
+   *  gated by ONE boolean setting (on by default). Nothing else — no
+   *  end-of-line author widget, no badges, no animation. Read reactively
+   *  (same seam as the host's editorExplorer read) so flipping the switch
+   *  reconfigures the live view in place instead of waiting for a reopen. */
+  const gitGutterPref = useSyncExternalStore(
+    useCallback((callback: () => void) => props.store.subscribe(callback), [props.store]),
+    useCallback(() => props.store.getSnapshot().prefs.editorGitGutter !== false, [props.store]),
+    // Server snapshot: this component is rendered to a string by the markdown
+    // preview specs. The value only feeds effects (the extensions are built
+    // client-side), so the store answers on both sides alike.
+    useCallback(() => props.store.getSnapshot().prefs.editorGitGutter !== false, [props.store]),
+  )
+  const gitGutterEnabled = viewerId === 'code' && gitGutterPref
+  /** Bumped by every save: the uncommitted diff moved while the file's git
+   *  status entry (which only tracks its XY code) did not. */
+  const [gitRevision, setGitRevision] = useState(0)
+  /** The view-side identity of the gutter's git source (stable across the
+   *  scope object's per-render identity churn). */
+  const gitHost = useMemo<GitGutterHost>(
+    () => ({ scope: { sessionId: scope.sessionId, cwd: scope.cwd, repoRoot: scope.repoRoot }, path }),
+    [scope.sessionId, scope.cwd, scope.repoRoot, path],
+  )
+  const gitKinds = useEditorGitGutter({ enabled: gitGutterEnabled, scope, path, content, revision: gitRevision })
   /** Preview scroll position across the preview<->edit toggle. The preview
    *  container re-mounts on every mode switch and its scrollTop lives on that
    *  element, so capture it on scroll and restore after each remount. Seeded
@@ -177,10 +210,17 @@ export function TextEditor(props: FileViewerProps) {
     themeCompRef.current = themeComp
     const searchPhrases = new CmSearchPhrases()
     searchPhrasesRef.current = searchPhrases
+    const gitComp = new CmGitGutterCompartment()
+    gitCompRef.current = gitComp
     const state = EditorState.create({
       doc: content,
       extensions: [
         CodeMirrorView.lineWrapping,
+        // The change bar sits BEFORE the line numbers (VS Code's own order):
+        // a thin colored bar at the far left, the number tinted beside it.
+        // The compartment carries all of it (hover blame included), so the
+        // setting can flip it in place below.
+        gitComp.of(gitGutterEnabled ? gitHost : null),
         lineNumbers(),
         history(),
         EditorState.tabSize.of(2),
@@ -266,6 +306,7 @@ export function TextEditor(props: FileViewerProps) {
       viewRef.current = null
       themeCompRef.current = null
       searchPhrasesRef.current = null
+      gitCompRef.current = null
     }
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
@@ -311,6 +352,26 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || searchPhrases === null) return
     view.dispatch({ effects: searchPhrases.reconfigure() })
   }, [localeSig])
+
+  // The uncommitted-change gutter follows the setting in place: the
+  // compartment swap installs (or removes) the decoration extensions and the
+  // hover blame without rebuilding the view — the document, history and
+  // scroll survive, exactly like the theme and search flips above.
+  useEffect(() => {
+    const view = viewRef.current
+    const gitComp = gitCompRef.current
+    if (view === null || gitComp === null) return
+    view.dispatch({ effects: gitComp.reconfigure(gitGutterEnabled ? gitHost : null) })
+  }, [gitGutterEnabled, gitHost])
+
+  // Push the line map into the live view. `content` / `truncated` re-run this
+  // after the view was rebuilt for a new file, and `gitGutterEnabled` after a
+  // re-install (a reconfigured state field starts empty).
+  useEffect(() => {
+    const view = viewRef.current
+    if (view === null) return
+    applyGitLineKinds(view, gitKinds)
+  }, [gitKinds, gitGutterEnabled, content, path, truncated])
 
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode
@@ -396,6 +457,10 @@ export function TextEditor(props: FileViewerProps) {
       setDirty(false)
       setConflict(false)
       setSaveState('saved')
+      // The saved bytes are a new revision of the uncommitted diff: re-read
+      // the change set (the file's XY status code usually stays the same, so
+      // the status store alone would never wake the gutter up again).
+      setGitRevision(value => value + 1)
     }).catch((error: unknown) => {
       savingRef.current = false
       if (error instanceof SidebarApiError && error.code === 'fs-conflict') {

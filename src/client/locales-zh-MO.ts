@@ -365,6 +365,8 @@ export const zhMO: Record<string, string> = {
   settingsHtmlDefaultUnsafeDesc: '開啟後，每次開啟 HTML 檔案時預覽預設處於非沙箱狀態（與介面同源，可讀取工作階段檔案與內部介面）；可在狀態列臨時恢復沙箱',
   settingsHtmlSandboxTitle: '關閉 HTML 預覽沙箱（不安全）',
   settingsHtmlSandboxDesc: '關閉後，預覽的 HTML 將與介面同源執行，可讀取工作階段檔案、本地儲存並呼叫內部介面。僅對完全可信的檔案開啟',
+  settingsEditorGitGutterTitle: '編輯器未提交變更提示',
+  settingsEditorGitGutterDesc: '在程式碼編輯器的行號欄以顏色標出未提交的變更，並在滑鼠懸停時顯示該行 blame（作者、時間與提交摘要）；關閉後編輯器不顯示任何變更標記',
   settingsBrowserSandboxTitle: '關閉瀏覽器沙箱（不安全）',
   settingsBrowserSandboxDesc: '關閉後，存取的任何網站都將與介面同源執行，可讀取工作階段資料並冒充你的登入狀態。僅對完全可信的網站開啟',
   settingsBrowserLoopbackTitle: '允許訪問的本機地址',

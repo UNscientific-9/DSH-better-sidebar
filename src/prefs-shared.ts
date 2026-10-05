@@ -62,6 +62,15 @@ export interface SidebarPrefs {
    */
   editorExplorer: boolean
   /**
+   * Whether the `code` editor paints its uncommitted changes the way VS Code
+   * does (issue #212): the line number takes the tone of its change, a thin
+   * colored bar sits at the left of the numbers, and hovering a line shows
+   * that line's blame as a plain-text tooltip. On by default — there is ONE
+   * switch for the whole feature (no per-part toggles: no author / hash /
+   * date / summary switches, no end-of-line widget).
+   */
+  editorGitGutter: boolean
+  /**
    * VS Code `files.exclude`-style glob patterns (the editor card's gear
    * popup manages the list): matched entries are REMOVED from the file tree
    * and the name search entirely — dot-prefixed rows otherwise render
@@ -181,6 +190,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   mobileDefaultTree: true,
   agentOpenTools: false,
   editorExplorer: false,
+  editorGitGutter: true,
   explorerExclude: [...EXPLORER_EXCLUDE_DEFAULTS],
   titleBarScheme: 'auto',
   titleBarPresetId: '',

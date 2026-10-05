@@ -1522,6 +1522,54 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: pointer;
 }
 
+/* ── Uncommitted-change gutter (issue #212) ─────────────────────────────────
+   VS Code's restraint: the line NUMBER takes the tone of its change, and a
+   2px bar sits at the far left of the numbers. The classes are handed to
+   CodeMirror as gutter-marker class names (see editor-git-gutter.ts), which
+   is why they are referenced from TS as well as styled here. The tones are
+   the file tree's own mapping (added/untracked green, modified amber,
+   deleted red). Deliberately nothing else: no end-of-line widget, no badge,
+   no animation, no gradient. */
+.editorGitAdd { color: var(--dsw-alias-state-success-primary); }
+.editorGitMod { color: var(--dsw-alias-state-warn-primary); }
+.editorGitDel { color: var(--dsw-alias-state-error-primary); }
+
+/* The bar column: 2px of ink, plus the hidden spacer that keeps the width
+   reserved while the file is clean (the numbers never shift sideways). */
+.editorGitBarGutter {
+  width: 2px;
+  min-width: 2px;
+}
+
+.editorGitBar,
+.editorGitBarSpacer {
+  width: 2px;
+  height: 100%;
+}
+
+.editorGitBarAdd { background: var(--dsw-alias-state-success-primary); }
+.editorGitBarMod { background: var(--dsw-alias-state-warn-primary); }
+.editorGitBarDel { background: var(--dsw-alias-state-error-primary); }
+
+/* Hover blame: plain text, two rows (author · when, then the summary). */
+.editorBlame {
+  max-width: 420px;
+  padding: 4px 8px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorBlameHead {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorBlameSummary {
+  margin-top: 2px;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Live sandbox status row (HTML preview / browser tab): GREEN while the
    sandbox is on (with the one-tap temporary unlock), RED while it is off
    (global setting or temporary unlock) — the red state is the persistent

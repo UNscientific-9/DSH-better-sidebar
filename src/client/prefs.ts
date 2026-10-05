@@ -62,6 +62,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    editorGitGutter: typeof record.editorGitGutter === 'boolean'
+      ? record.editorGitGutter
+      : SIDEBAR_PREFS_DEFAULTS.editorGitGutter,
     explorerExclude: stringArrayOf(record.explorerExclude),
     // The title-bar scheme (auto | web | preset | custom). The schema
     // declares the field WITHOUT a default, so documents written by older

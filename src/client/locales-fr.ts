@@ -343,6 +343,8 @@ export const fr: Record<string, string> = {
   settingsHtmlDefaultUnsafeDesc: 'Une fois activé, chaque ouverture d’un fichier HTML démarre l’aperçu en état non bac à sable (même origine que l’interface, pouvant lire les fichiers de session et les interfaces internes) ; la barre d’état permet de restaurer temporairement le bac à sable',
   settingsHtmlSandboxTitle: 'Désactiver le bac à sable de l’aperçu HTML (non sécurisé)',
   settingsHtmlSandboxDesc: 'Une fois désactivé, le HTML de l’aperçu s’exécute avec la même origine que l’interface, peut lire les fichiers de session, le stockage local et appeler les interfaces internes. À activer uniquement pour des fichiers entièrement fiables',
+  settingsEditorGitGutterTitle: 'Marqueurs des modifications non validées',
+  settingsEditorGitGutterDesc: 'Colore la marge des numéros de ligne pour les modifications non validées et affiche le blame de la ligne au survol (auteur, date et résumé du commit) ; désactivé masque toute marque',
   settingsBrowserSandboxTitle: 'Désactiver le bac à sable du navigateur (non sécurisé)',
   settingsBrowserSandboxDesc: 'Une fois désactivé, tout site visité s’exécute avec la même origine que l’interface, peut lire les données de session et usurper votre état de connexion. À activer uniquement pour des sites entièrement fiables',
   settingsBrowserLoopbackTitle: 'Adresses locales autorisées',

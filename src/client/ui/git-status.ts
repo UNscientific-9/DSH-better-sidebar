@@ -306,7 +306,10 @@ export function useGitStatus(
     slot.listeners.add(listener)
     return () => { slot.listeners.delete(listener) }
   }, [slot])
-  useSyncExternalStore(subscribe, () => slot.version)
+  // The third argument (server snapshot) keeps a consumer that is rendered to
+  // a string alive — the editor does exactly that in the markdown specs, and
+  // the slot's version is 0 on both sides.
+  useSyncExternalStore(subscribe, () => slot.version, () => slot.version)
 
   useEffect(() => {
     slot.pollMs = pollMs

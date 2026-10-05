@@ -95,6 +95,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),
   editorExplorer: z.boolean().default(false),
+  editorGitGutter: z.boolean().default(true),
   explorerExclude: z.array(z.string()).default([...EXPLORER_EXCLUDE_DEFAULTS]),
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
   titleBarPresetId: z.string(),

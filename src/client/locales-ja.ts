@@ -350,6 +350,8 @@ export const ja: Record<string, string> = {
   settingsHtmlDefaultUnsafeDesc: 'オンにすると、新しく開く HTML プレビューは非サンドボックス状態で起動（GUI と同一オリジン、会話ファイルや内部 API を読み取り可）。ステータス行から一時的にサンドボックスを復元可能',
   settingsHtmlSandboxTitle: 'HTML プレビューのサンドボックスを無効化（非安全）',
   settingsHtmlSandboxDesc: 'サンドボックスをオフにすると、プレビューされる HTML は GUI と同一オリジンで動作し、会話ファイル・ローカルストレージ・内部 API にアクセス可能。完全に信頼できるファイルのみで有効化',
+  settingsEditorGitGutterTitle: 'エディターの未コミット変更マーカー',
+  settingsEditorGitGutterDesc: 'コードエディターの行番号欄に未コミットの変更を色付けし、ホバーでその行の blame（作者・時刻・コミット概要）を表示します。オフにすると変更マーカーを表示しません',
   settingsBrowserSandboxTitle: 'ブラウザーサンドボックスを無効化（非安全）',
   settingsBrowserSandboxDesc: 'サンドボックスをオフにすると、訪問するあらゆるサイトが GUI と同一オリジンで動作し、会話データを読み取ったりログイン状態を偽装したりできます。完全に信頼できるサイトのみで有効化',
   settingsBrowserLoopbackTitle: '許可されたローカルアドレス',

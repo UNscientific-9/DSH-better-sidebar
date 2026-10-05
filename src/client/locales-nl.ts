@@ -348,6 +348,8 @@ export const nl: Record<string, string> = {
   settingsHtmlDefaultUnsafeDesc: 'Indien aan, start elke nieuw geopende HTML-voorbeeld in de niet-gesandboxte staat (zelfde origin als de GUI — kan sessiebestanden en interne API\'s lezen); de statusbalk biedt nog een eenkliks-herstel',
   settingsHtmlSandboxTitle: 'HTML-voorbeeld-sandbox uitschakelen (onveilig)',
   settingsHtmlSandboxDesc: 'Met de sandbox uit draait gepreviewde HTML met dezelfde origin als de GUI: kan sessiebestanden, lokale opslag lezen en interne API\'s aanroepen. Alleen inschakelen voor volledig vertrouwde bestanden',
+  settingsEditorGitGutterTitle: 'Markeringen voor niet-gecommitte wijzigingen',
+  settingsEditorGitGutterDesc: 'Kleurt de regelnummer-marge van de code-editor voor niet-gecommitte wijzigingen en toont bij hover de blame van die regel (auteur, tijd en commit-samenvatting); uit verbergt elke markering',
   settingsBrowserSandboxTitle: 'Browser-sandbox uitschakelen (onveilig)',
   settingsBrowserSandboxDesc: 'Met de sandbox uit draait elke bezochte site met dezelfde origin als de GUI: kan sessiegegevens lezen en zich voordoen als uw ingelogde sessie. Alleen inschakelen voor volledig vertrouwde sites',
   settingsBrowserLoopbackTitle: 'Toegestane lokale adressen',
