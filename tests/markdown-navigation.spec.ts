@@ -165,6 +165,10 @@ describe('rewriteLocalMarkdownLinks', () => {
     // The link label is untouched, titles survive, and the SAME destination the
     // judge accepts is the one the rewriter leaves alone.
     expect(rewriteLocalMarkdownLinks('[x](./other.md#标题 "title")', DOC, CWD)).toBe('[x](./other.md%23标题 "title")')
+    // A `?` inside the fragment is encoded as well: the host refuses any
+    // destination carrying a query, so leaving it raw would undo the claim.
+    expect(rewriteLocalMarkdownLinks('[x](./other.md#a?b)', DOC, CWD)).toBe('[x](./other.md%23a%3Fb)')
+    expect(fileTarget('./other.md%23a%3Fb').fragment).toBe('a?b')
     expect(rewriteLocalMarkdownLinks('[x](./other.md#L24)', DOC, CWD)).toBe('[x](./other.md#L24)')
     expect(rewriteLocalMarkdownLinks('[x](./other.md)', DOC, CWD)).toBe('[x](./other.md)')
   })

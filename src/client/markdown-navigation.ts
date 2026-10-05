@@ -273,7 +273,10 @@ function rewriteDestination(destination: string, docPath: string | undefined, cw
   // line destination belongs to the host's own grammar.
   if (separator === null || separator.length === ENCODED_HASH.length) return destination
   if (isHostLineFragment(fragment)) return destination
-  return `${pathPart}${ENCODED_HASH}${fragment}`
+  // A `?` inside the fragment must be encoded too: the host refuses a
+  // destination that carries a query (it looks for the `?` before decoding),
+  // so an unencoded one would turn the link back into plain text.
+  return `${pathPart}${ENCODED_HASH}${fragment.replace(/\?/g, '%3F')}`
 }
 
 /**
@@ -338,7 +341,7 @@ export function rewriteLocalMarkdownLinks(
  * @param root - the surface container.
  * @param fragment - the percent-decoded fragment.
  */
-export function findAnchorTarget(root: ParentNode, fragment: string): HTMLElement | null {
+function findAnchorTarget(root: ParentNode, fragment: string): HTMLElement | null {
   const wanted = new Set([fragment, githubHeadingSlug(fragment)])
   wanted.delete('')
   if (wanted.size === 0) return null
@@ -385,7 +388,7 @@ function visibleAncestorOf(target: HTMLElement): HTMLElement {
  * @param container - the surface container.
  * @param target - the element to reveal.
  */
-export function scrollAnchorIntoView(container: HTMLElement, target: HTMLElement): void {
+function scrollAnchorIntoView(container: HTMLElement, target: HTMLElement): void {
   const scroller = scrollHostFor(container)
   const box = visibleAncestorOf(target)
   const offset = box.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop

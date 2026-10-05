@@ -42,7 +42,21 @@ class FakeLocale {
   }
 }
 
-const SESSION = 's1'
+/**
+ * A fresh session id per test (or per test GROUP — a cross-file jump parks its
+ * fragment under session + path, so the source and target mounts of one case
+ * must share one id).
+ *
+ * Why not one fixed id: the sidebar store persists each session's layout to
+ * localStorage with a 200ms debounce, so an id reused across cases can load a
+ * PREVIOUS case's tabs (the debounced write lands between them) — the mount
+ * then starts with tabs nobody opened in it.
+ */
+let sessionCounter = 0
+function nextSession(): string {
+  sessionCounter += 1
+  return `s${sessionCounter}`
+}
 
 interface Mounted {
   container: HTMLDivElement
@@ -53,7 +67,7 @@ interface Mounted {
 
 /** The sidebar service + ctx one surface is mounted with, and a reader of the
  *  tabs an open landed: the app's own observation point, not a stub. */
-function sidebarCtx(): {
+function sidebarCtx(sessionId: string): {
   ctx: Context
   store: ReturnType<typeof createSidebarStore>
   tabs: () => { type: string; path?: string }[]
@@ -62,11 +76,11 @@ function sidebarCtx(): {
   const service = createBetterSidebarService(store)
   // openTab refuses a type nobody registered.
   service.registerTab({ id: 'editor', title: 'Editor', dedupeKey: (tab) => tab.path, component: () => null })
-  store.setSession(SESSION)
+  store.setSession(sessionId)
   const ctx = {
     betterSidebar: service,
     get: (name: string) => name === 'betterSidebar' ? service : undefined,
-    sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: { [SESSION]: { cwd: '/p' } } }) } },
+    sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: { [sessionId]: { cwd: '/p' } } }) } },
   } as unknown as Context
   return { ctx, store, tabs: () => allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs) }
 }
@@ -76,13 +90,13 @@ function sidebarCtx(): {
  * sidebar service — so a claimed link's open is observed the way the app
  * observes it (a tab landing in the store), not through a stub.
  */
-function mountEditor(content: string, path: string): Mounted {
+function mountEditor(content: string, path: string, sessionId: string = nextSession()): Mounted {
   attachLocale(new FakeLocale())
-  const { ctx, store, tabs } = sidebarCtx()
+  const { ctx, store, tabs } = sidebarCtx(sessionId)
   const props: FileViewerProps = {
     ctx,
     store,
-    scope: { sessionId: SESSION, cwd: '/p' },
+    scope: { sessionId, cwd: '/p' },
     path,
     title: path.slice(path.lastIndexOf('/') + 1),
     viewerId: 'markdown',
@@ -97,9 +111,9 @@ function mountEditor(content: string, path: string): Mounted {
  * reading mode — the plugin's SECOND markdown surface, whose base is the op
  * target's own path.
  */
-function mountReadingPane(path: string, markdown: string): Mounted {
+function mountReadingPane(path: string, markdown: string, sessionId: string = nextSession()): Mounted {
   attachLocale(new FakeLocale())
-  const { ctx, tabs } = sidebarCtx()
+  const { ctx, tabs } = sidebarCtx(sessionId)
   const mounted = renderRoot(createElement(DiffPane, {
     target: {
       kind: 'op',
@@ -110,7 +124,7 @@ function mountReadingPane(path: string, markdown: string): Mounted {
       },
     },
     ctx,
-    scope: { sessionId: SESSION, cwd: '/p' },
+    scope: { sessionId, cwd: '/p' },
     height: 300,
     onHeightCommit: () => {},
     onClose: () => {},
@@ -179,6 +193,9 @@ afterEach(() => {
   scrollTo.mockClear()
   attachLocale(undefined)
   document.body.innerHTML = ''
+  // The layout persistence above outlives a test (its debounced write may land
+  // after the unmount); a later case must not inherit it.
+  localStorage.clear()
 })
 
 describe('the markdown preview surface', () => {
@@ -318,14 +335,15 @@ describe('the markdown preview surface', () => {
     // `#L24` is the host's own grammar (the parser hands it over as
     // `options.line`), so the rewriter must leave it alone and the open must
     // not park a fragment named "L24".
-    const source = mountEditor('[jump](./other.md#L24)\n', '/p/docs/README.md')
+    const session = nextSession()
+    const source = mountEditor('[jump](./other.md#L24)\n', '/p/docs/README.md', session)
     const link = fileLink(surfaceOf(source.container), './other.md')
     expect(link).not.toBeNull()
     click(link!)
     expect(source.tabs().map(tab => tab.path)).toEqual(['/p/docs/other.md'])
     source.unmount()
 
-    const target = mountEditor('## L24 is not a heading\n', '/p/docs/other.md')
+    const target = mountEditor('## L24 is not a heading\n', '/p/docs/other.md', session)
     const scrollTop = watchScrollTop(surfaceOf(target.container))
     stubRectTop(surfaceOf(target.container).querySelector('h2')!, 300)
     await flushMicrotasks()
@@ -348,7 +366,8 @@ describe('the markdown preview surface', () => {
   it('opens a cross-file target and lands the parked fragment once that file renders', async () => {
     // The link's fragment cannot reach the host parser as authored — this is
     // the `%23` carrier, end to end: rewrite → host decode → delegate → park.
-    const source = mountEditor('[jump](./other.md#目标标题)\n', '/p/docs/README.md')
+    const session = nextSession()
+    const source = mountEditor('[jump](./other.md#目标标题)\n', '/p/docs/README.md', session)
     const link = fileLink(surfaceOf(source.container), './other.md#目标标题')
     expect(link).not.toBeNull()
     click(link!)
@@ -357,7 +376,7 @@ describe('the markdown preview surface', () => {
 
     // The target document renders in its own editor (same session, same path
     // spelling the open used) and takes the parked fragment.
-    const target = mountEditor('## 目标标题\n', '/p/docs/other.md')
+    const target = mountEditor('## 目标标题\n', '/p/docs/other.md', session)
     const targetSurface = surfaceOf(target.container)
     const scrollTop = watchScrollTop(targetSurface)
     const heading = targetSurface.querySelector<HTMLElement>('h2#目标标题')!
@@ -369,7 +388,7 @@ describe('the markdown preview surface', () => {
     target.unmount()
 
     // Consumed: a later mount of the same document does not jump again.
-    const again = mountEditor('## 目标标题\n', '/p/docs/other.md')
+    const again = mountEditor('## 目标标题\n', '/p/docs/other.md', session)
     const againSurface = surfaceOf(again.container)
     const againScrollTop = watchScrollTop(againSurface)
     stubRectTop(againSurface.querySelector<HTMLElement>('h2#目标标题')!, 200)
