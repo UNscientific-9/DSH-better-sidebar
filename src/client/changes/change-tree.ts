@@ -150,16 +150,19 @@ export function buildChangeTree(entries: readonly GitStatusEntry[]): ChangeNode[
 export interface ChangeLineTotals {
   additions: number
   deletions: number
-  /** Rows that actually carry counts. 0 means the group has nothing to sum
-   *  (e.g. only untracked files), so the header must show no total at all. */
+  /** Rows that actually PRINT numbers. 0 means the group has nothing to sum
+   *  (only untracked files, binary blobs — or only 0/0 entries such as a pure
+   *  rename), so the header must show no total at all. */
   files: number
 }
 
 /**
  * Sum one group tree's line counts (#131): the group header's total is exactly
- * the sum of the numbers its own file rows print. Binary rows and rows without
- * counts (untracked files) contribute nothing — never a fabricated 0 — and
- * folding a directory is a view state, so every member counts either way.
+ * the sum of the numbers its own file rows print. Binary rows, rows without
+ * counts (untracked files) and rows whose two numbers are both zero (a pure
+ * rename, a mode-only change — their rows print nothing) contribute nothing,
+ * never a fabricated 0 — and folding a directory is a view state, so every
+ * member counts either way.
  */
 export function sumLineCounts(nodes: readonly ChangeNode[]): ChangeLineTotals {
   const totals: ChangeLineTotals = { additions: 0, deletions: 0, files: 0 }
@@ -172,6 +175,10 @@ export function sumLineCounts(nodes: readonly ChangeNode[]): ChangeLineTotals {
       continue
     }
     if (node.counts === undefined || !('additions' in node.counts)) continue
+    // A 0/0 reading is a row with nothing to print (`+0 −0` would be an
+    // invented number), so it must not make the header print an empty cluster
+    // either — a group holding nothing but renames then stays bare.
+    if (node.counts.additions === 0 && node.counts.deletions === 0) continue
     totals.additions += node.counts.additions
     totals.deletions += node.counts.deletions
     totals.files += 1

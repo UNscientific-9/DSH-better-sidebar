@@ -60,6 +60,22 @@ describe('change tree line counts', () => {
       .toEqual({ additions: 0, deletions: 0, files: 0 })
   })
 
+  it('counts only the rows that PRINT numbers: a 0/0 rename has none to sum (#131)', () => {
+    // A rename with no content change is `0 0` in numstat (a mode-only change
+    // reads the same way): its row prints nothing at all, so it must not make
+    // a group's total claim it contributed numbers — otherwise a group holding
+    // nothing but renames renders an empty `+N −M` cluster in its header.
+    expect(sumLineCounts(buildChangeTree([entry('renamed.ts', 'R ', { additions: 0, deletions: 0 })])))
+      .toEqual({ additions: 0, deletions: 0, files: 0 })
+    expect(sumLineCounts(buildChangeTree([entry('mode-only.ts', ' M', { additions: 0, deletions: 0 })])))
+      .toEqual({ additions: 0, deletions: 0, files: 0 })
+    // A rename that DID move lines keeps contributing them...
+    expect(sumLineCounts(buildChangeTree([
+      entry('edited.ts', 'R ', { additions: 2, deletions: 1 }),
+      entry('renamed.ts', 'R ', { additions: 0, deletions: 0 }),
+    ]))).toEqual({ additions: 2, deletions: 1, files: 1 })
+  })
+
   it('counts every member regardless of how deep the directory chain folds', () => {
     // One compressed chain row stands for `src/client/changes`; the total must
     // still be the sum of the leaves under it.
