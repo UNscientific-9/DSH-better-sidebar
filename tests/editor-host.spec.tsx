@@ -53,6 +53,28 @@ vi.mock('../src/client/api.ts', () => ({
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
+/**
+ * Wait until the tree has rendered the row for `name` — the precondition of
+ * every tree interaction below.
+ *
+ * The level cache is filled by an async `fs.trees` answer, so the mount
+ * helpers' microtask drains only hand back an interactive tree when that
+ * answer happens to land inside them. On a loaded runner the scheduler can
+ * defer React's flush past those microtasks, and the tree is then still
+ * showing its loading row: the CI failure read `names=` (nothing rendered)
+ * or `names=tmp` (the root row only). Wait for the rendered CONDITION, never
+ * for a bigger fixed slice of time — a tree that never lists `name` is a real
+ * product failure and still fails the case, on the default `vi.waitFor`
+ * timeout.
+ */
+async function waitForTreeRow(container: HTMLElement, name: string): Promise<void> {
+  await vi.waitFor(() => {
+    const found = [...container.querySelectorAll('[class*="explorerName"]')]
+      .some(el => el.textContent === name)
+    expect(found).toBe(true)
+  })
+}
+
 /** A store with the seeded editor-home tab (default prefs: separate mode;
  *  merged-mode scenarios re-enable editorExplorer explicitly). */
 function setup(): {
@@ -606,6 +628,7 @@ describe('EditorHost native-tab context-menu actions', () => {
     const { container, unmount } = await mountNative(ctx, store, service)
     try {
       const before = tabCount(store)
+      await waitForTreeRow(container, 'a.ts')
       clickOpenToSide(container)
       // 1) EditorHost routed the gesture to the service with the side target…
       expect(opens).toContainEqual({ type: 'editor', path: '/tmp/a.ts', target: 'side' })
@@ -641,6 +664,7 @@ describe('EditorHost native-tab context-menu actions', () => {
     const { container, unmount } = await mountHostWithTreeWithCwd(treeCtx as unknown as Context, store, fileTab)
     try {
       const before = tabCount(store)
+      await waitForTreeRow(container, 'a.ts')
       clickOpenToSide(container)
       // A bottom-workbench tab keeps the plugin's own split: a NEW tab in the
       // same pane family, and no side open was requested.
@@ -662,6 +686,7 @@ describe('EditorHost native-tab context-menu actions', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { container, unmount } = await mountNative(ctx, store, service)
     try {
+      await waitForTreeRow(container, 'a.ts')
       const row = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
         .find(el => el.querySelector('[class*="explorerName"]')?.textContent === 'a.ts')
       expect(row).toBeDefined()
