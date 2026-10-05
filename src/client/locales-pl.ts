@@ -353,6 +353,8 @@ export const pl: Record<string, string> = {
   settingsHtmlDefaultUnsafeDesc: 'Po włączeniu każdy nowo otwarty podgląd HTML zaczyna się bez piaskownicy (ten sam origin co interfejs — może czytać pliki sesji i wewnętrzne API); pasek stanu nadal pozwala przywrócić piaskownicę',
   settingsHtmlSandboxTitle: 'Wyłącz piaskownicę podglądu HTML (niebezpieczne)',
   settingsHtmlSandboxDesc: 'Po wyłączeniu podglądany HTML działa w tym samym originie co interfejs: może czytać pliki sesji, localStorage i wywoływać wewnętrzne API. Włączaj tylko dla w pełni zaufanych plików',
+  settingsEditorGitGutterTitle: 'Oznaczenia niezacommitowanych zmian',
+  settingsEditorGitGutterDesc: 'Koloruje margines numerów wierszy dla niezacommitowanych zmian i pokazuje po najechaniu blame wiersza (autor, czas i podsumowanie commita); wyłączenie ukrywa wszystkie oznaczenia',
   settingsBrowserSandboxTitle: 'Wyłącz piaskownicę przeglądarki (niebezpieczne)',
   settingsBrowserSandboxDesc: 'Po wyłączeniu każda odwiedzana strona działa w tym samym originie co interfejs: może czytać dane sesji i podszywać się pod Twoją sesję logowania. Włączaj tylko dla w pełni zaufanych witryn',
   settingsBrowserLoopbackTitle: 'Dozwolone adresy lokalne',

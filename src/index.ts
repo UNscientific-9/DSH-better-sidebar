@@ -181,6 +181,15 @@ function selectedRepoOf(payload: unknown): string | undefined {
   return requireAbsolute(requireString(payload, 'repoRoot'))
 }
 
+/** One required 1-based line number of a `git blame -L` request. */
+function requireLineNumber(payload: unknown, key: string): number {
+  const value = (payload as Record<string, unknown> | null)?.[key]
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new SidebarError('bad-request', `"${key}" must be a positive integer line number`)
+  }
+  return value
+}
+
 /**
  * Resolve a relative path an EDITOR surface carried (the file tree, the
  * editor buffer, and `fs.read`, which the untracked-diff fallback reads
@@ -677,6 +686,16 @@ function buildApi(
       const path = record.path === undefined ? undefined : await resolveStatusPath(cwd, requireString(payload, 'path'), repoRoot)
       return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
     },
+    // The editor's change gutter asks for the WHOLE uncommitted change of one
+    // file (worktree against HEAD, staged and unstaged together) — the two
+    // existing `git.diff` sides would each report only half of a partly
+    // staged file, and the gutter's line numbers are the worktree's.
+    'git.diff-head': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
+      return { diff: await git.diffHead(cwd, path, repoRoot) }
+    },
     'git.stage': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown }
@@ -763,6 +782,17 @@ function buildApi(
       const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
+    },
+    // The editor's hover blame: ONE line range per request (the tooltip never
+    // prefetches a file) and an empty list for every failure — see git.blame.
+    'git.blame': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot))
+      const startLine = requireLineNumber(payload, 'startLine')
+      const endLine = requireLineNumber(payload, 'endLine')
+      if (endLine < startLine) throw new SidebarError('bad-request', '"endLine" must not precede "startLine"')
+      return { lines: await git.blame(cwd, path, startLine, endLine, repoRoot) }
     },
     // Commit-message suggestion: build a prompt from the pending changes and
     // stream it through the harness LLM service (`ctx.llm`) — no agent is

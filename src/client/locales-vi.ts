@@ -351,6 +351,8 @@ export const vi: Record<string, string> = {
   settingsHtmlDefaultUnsafeDesc: 'Khi bật, mỗi lần mở tệp HTML xem trước sẽ mặc định không sandbox (cùng nguồn UI, có thể đọc tệp phiên và API nội bộ); có thể khôi phục sandbox tạm thời trên thanh trạng thái',
   settingsHtmlSandboxTitle: 'Tắt sandbox xem trước HTML (không an toàn)',
   settingsHtmlSandboxDesc: 'Khi tắt, HTML xem trước sẽ chạy cùng nguồn với UI: có thể đọc tệp phiên, local storage và gọi API nội bộ. Chỉ bật cho tệp hoàn toàn đáng tin cậy',
+  settingsEditorGitGutterTitle: 'Dấu thay đổi chưa commit trong trình soạn thảo',
+  settingsEditorGitGutterDesc: 'Tô màu lề số dòng của trình soạn thảo mã cho các thay đổi chưa commit và hiện blame của dòng khi rê chuột (tác giả, thời gian và tóm tắt commit); tắt sẽ ẩn mọi dấu',
   settingsBrowserSandboxTitle: 'Tắt sandbox trình duyệt (không an toàn)',
   settingsBrowserSandboxDesc: 'Khi tắt, mọi trang truy cập sẽ chạy cùng nguồn với UI: có thể đọc dữ liệu phiên và mạo danh phiên đăng nhập. Chỉ bật cho trang hoàn toàn đáng tin cậy',
   settingsBrowserLoopbackTitle: 'Địa chỉ cục bộ được phép',

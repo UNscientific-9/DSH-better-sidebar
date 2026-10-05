@@ -349,6 +349,8 @@ export const id: Record<string, string> = {
   settingsHtmlDefaultUnsafeDesc: 'Saat aktif, setiap pratinjau HTML yang baru dibuka dimulai dalam keadaan tanpa sandbox (asal yang sama dengan GUI — dapat membaca berkas sesi dan API internal); baris status masih menawarkan pemulihan sekali ketuk',
   settingsHtmlSandboxTitle: 'Nonaktifkan sandbox pratinjau HTML (tidak aman)',
   settingsHtmlSandboxDesc: 'Dengan sandbox mati, HTML yang dipratinjau berjalan dengan asal yang sama dengan GUI: dapat membaca berkas sesi, penyimpanan lokal, dan memanggil API internal. Hanya aktifkan untuk berkas yang sepenuhnya tepercaya',
+  settingsEditorGitGutterTitle: 'Penanda perubahan belum di-commit di editor',
+  settingsEditorGitGutterDesc: 'Mewarnai margin nomor baris editor kode untuk perubahan yang belum di-commit dan menampilkan blame baris itu saat kursor diarahkan (penulis, waktu, ringkasan commit); nonaktif menyembunyikan semua penanda',
   settingsBrowserSandboxTitle: 'Nonaktifkan sandbox browser (tidak aman)',
   settingsBrowserSandboxDesc: 'Dengan sandbox mati, situs yang dikunjungi berjalan dengan asal yang sama dengan GUI: dapat membaca data sesi dan menyamar sebagai sesi login Anda. Hanya aktifkan untuk situs yang sepenuhnya tepercaya',
   settingsBrowserLoopbackTitle: 'Alamat lokal yang diizinkan',

@@ -139,6 +139,19 @@ export interface GitLogEntry {
   refs: string
 }
 
+/** One `git blame --porcelain` row (the editor's hover blame). */
+export interface GitBlameLine {
+  /** 1-based line number in the file as it exists in the worktree. */
+  line: number
+  /** The blamed commit (40 hex chars; all zeros for an uncommitted line). */
+  hash: string
+  author: string
+  /** ISO 8601 author time carrying the author's own UTC offset. */
+  date: string
+  /** The commit's subject line. */
+  summary: string
+}
+
 /** Text read result. `mtimeMs` is the save route's conflict baseline. */
 export interface FsTextResult { kind: 'text'; content: string; truncated: boolean; mtimeMs?: number }
 /** Binary read result (no content; images load through the media route).
@@ -435,6 +448,17 @@ export const api = {
    *  reads both sides' full contents through this. */
   gitShow: (scope: SessionScope, rev: string, path: string, worktree?: string, signal?: AbortSignal) =>
     call<{ content: string | null }>('git.show', gitPayload(scope, worktree, { rev, path }), signal),
+  /** ONE file's whole uncommitted change (worktree against HEAD, staged and
+   *  unstaged in one patch). The editor's change gutter maps this onto the
+   *  buffer's line numbers; untracked files are marked from the status store
+   *  instead, because no diff side ever lists them. */
+  gitDiffHead: (scope: SessionScope, path: string, worktree?: string, signal?: AbortSignal) =>
+    call<{ diff: string }>('git.diff-head', gitPayload(scope, worktree, { path }), signal),
+  /** Blame ONE line range (`git blame --porcelain -L`). Never throws: every
+   *  failure (untracked file, not a repository, command failure) answers with
+   *  an empty list. Called on hover only — a file is never prefetched. */
+  gitBlame: (scope: SessionScope, path: string, startLine: number, endLine: number, worktree?: string, signal?: AbortSignal) =>
+    call<{ lines: GitBlameLine[] }>('git.blame', gitPayload(scope, worktree, { path, startLine, endLine }), signal),
   /** The session's file-tool events for the changes tab's session lens: the
    *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
    *  capped to the recent window host-side. The client runtime exposes no

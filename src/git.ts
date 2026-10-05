@@ -286,6 +286,109 @@ export function runGitRaw(cwd: string, args: string[], timeoutMs = 30_000): Prom
   return runGit(cwd, args, timeoutMs)
 }
 
+/** One parsed `git blame --porcelain` row (the editor's hover blame). */
+export interface GitBlameLine {
+  /** 1-based line number in the file as it exists in the worktree. */
+  line: number
+  /** The blamed commit (40 hex chars; all zeros for a line that is not
+   *  committed yet — a worktree edit git cannot attribute to a commit). */
+  hash: string
+  author: string
+  /** Author time as ISO 8601 carrying the AUTHOR's UTC offset, so the value
+   *  is stable regardless of the host machine's timezone. */
+  date: string
+  /** The commit's subject line (git's own placeholder for uncommitted rows). */
+  summary: string
+}
+
+/** Format epoch seconds plus a `+HHMM`/`-HHMM` timezone as ISO 8601. */
+function isoWithOffset(seconds: number, timezone: string): string {
+  const zone = /^([+-])(\d{2})(\d{2})$/.exec(timezone)
+  const offsetMinutes = zone === null
+    ? 0
+    : (zone[1] === '-' ? -1 : 1) * (Number(zone[2]) * 60 + Number(zone[3]))
+  const shifted = new Date((seconds + offsetMinutes * 60) * 1000)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const stamp = `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`
+    + `T${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}`
+  return zone === null ? `${stamp}Z` : `${stamp}${zone[1]}${zone[2]}:${zone[3]}`
+}
+
+/**
+ * Parse `git blame --porcelain -L <a>,<b>` output into one row per blamed
+ * line. Porcelain repeats only the `<hash> <orig> <final>` header for the
+ * SECOND and later lines of the same commit (the author / committer / summary
+ * block is emitted once per commit per run), so metadata is carried forward
+ * per hash; every record ends with its `\t`-prefixed content line, which is
+ * where the walk resumes. Unknown lines are skipped, never fatal.
+ */
+export function parseBlamePorcelain(output: string): GitBlameLine[] {
+  const rows: GitBlameLine[] = []
+  const seen = new Map<string, { author: string; date: string; summary: string }>()
+  const lines = output.split('\n')
+  let index = 0
+  while (index < lines.length) {
+    const header = /^([0-9a-f]{40,64}) \d+ (\d+)(?: \d+)?$/.exec(lines[index]!)
+    if (header === null) {
+      index += 1
+      continue
+    }
+    const hash = header[1]!
+    const line = Number(header[2])
+    index += 1
+    let author: string | undefined
+    let date: string | undefined
+    let summary: string | undefined
+    while (index < lines.length && !lines[index]!.startsWith('\t')) {
+      const text = lines[index]!
+      index += 1
+      if (text.startsWith('author ')) author = text.slice('author '.length)
+      else if (text.startsWith('author-time ')) {
+        const seconds = Number(text.slice('author-time '.length))
+        const zone = /^author-tz (.+)$/.exec(lines[index] ?? '')
+        if (Number.isFinite(seconds)) date = isoWithOffset(seconds, zone?.[1] ?? '')
+      } else if (text.startsWith('summary ')) summary = text.slice('summary '.length)
+    }
+    // The record's content line; the next header follows it.
+    if (index < lines.length && lines[index]!.startsWith('\t')) index += 1
+    const known = seen.get(hash)
+    if (known === undefined) {
+      const record = { author: author ?? '', date: date ?? '', summary: summary ?? '' }
+      seen.set(hash, record)
+      rows.push({ hash, line, ...record })
+    } else {
+      rows.push({ hash, line, ...known })
+    }
+  }
+  return rows
+}
+
+/**
+ * Blame one line range of a file (`git blame --porcelain -L <a>,<b>`).
+ * Every failure mode — not a repository, an untracked file (`git blame`
+ * exits non-zero: no such path in HEAD), a bad revision, a stalled mount
+ * hitting the command timeout — resolves to an EMPTY result: the editor's
+ * hover tooltip shows nothing and a missing answer can never break the
+ * editing surface.
+ */
+export async function blame(
+  cwd: string,
+  path: string,
+  startLine: number,
+  endLine: number,
+  selected?: string,
+): Promise<GitBlameLine[]> {
+  try {
+    const root = await repoRoot(cwd, selected)
+    const output = await runGit(root, [
+      'blame', '--porcelain', '-L', `${String(startLine)},${String(endLine)}`, '--', path,
+    ])
+    return parseBlamePorcelain(output)
+  } catch {
+    return []
+  }
+}
+
 /** Cap on child directories probed by the workspace-container fallback scan.
  *  A home-directory cwd can hold hundreds of visible folders (Library, iCloud
  *  mounts…); probing them all serially is what froze the panel in #369. */
@@ -524,6 +627,26 @@ export async function diff(cwd: string, path: string | undefined, staged: boolea
   if (staged) args.push('--cached')
   if (path !== undefined) args.push('--', path)
   return runGit(root, args)
+}
+
+/**
+ * Diff text of the worktree against HEAD — staged and unstaged changes in
+ * ONE patch, which is what "uncommitted changes" means for the editor's
+ * change gutter (the two-sided `diff()` above would each miss half of a file
+ * that is partly staged). A repository whose HEAD is not born yet cannot
+ * answer `diff HEAD`, so that one failure falls back to `diff --cached`
+ * (index against the empty tree — the unborn-HEAD shape of the same
+ * question). Untracked files never appear in either: the caller marks them
+ * from the status store instead.
+ */
+export async function diffHead(cwd: string, path: string | undefined, selected?: string): Promise<string> {
+  const root = await repoRoot(cwd, selected)
+  const tail = path !== undefined ? ['--', path] : []
+  try {
+    return await runGit(root, ['diff', '--no-ext-diff', '--no-color', '-U3', 'HEAD', ...tail])
+  } catch {
+    return runGit(root, ['diff', '--no-ext-diff', '--no-color', '-U3', '--cached', ...tail])
+  }
 }
 
 /** Stage paths (all when path is undefined). */
