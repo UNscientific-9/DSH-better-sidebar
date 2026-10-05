@@ -12,7 +12,8 @@
  *
  * Selection (VS Code semantics, no modifier = the old click semantics
  * untouched): Ctrl/Cmd+click toggles a row and sets the anchor, Shift+click
- * selects the visible range from the anchor, Escape / a blank click clears,
+ * selects the visible range from the anchor (in the tree's own row order —
+ * `sort` included), Escape / a blank click clears,
  * right-clicking outside the selection collapses it onto the row. A non-empty
  * selection shows the batch bar above the root row (copy paths / delete /
  * clear); the batch delete confirms once and removes sequentially.
@@ -1657,14 +1658,16 @@ export function FileTree(props: {
     }
   }, [data])
 
-  // The Shift range walks the rows the user can actually see: depth-first,
-  // expanded state decides. Recomputed with the level cache, never rendered.
+  // The Shift range walks the rows the user can actually see: the level's
+  // rows in the SAME order `renderLevel` draws them (the sort choice), then
+  // depth-first, expanded state decides. Recomputed with the level cache,
+  // never rendered.
   const visibleRows = useMemo(() => {
     const rows: { path: string; isDir: boolean }[] = []
     const walk = (dir: string): void => {
       const level = data[dir]
       if (level?.entries === undefined) return
-      for (const entry of level.entries) {
+      for (const entry of sortEntries(level.entries, sort)) {
         // A folded row IS one row: its identity is the chain head (the level
         // entry the walk is on), and it descends into the chain TAIL — the
         // same shape `renderLevel` draws, so a Shift range covers what the
@@ -1677,7 +1680,7 @@ export function FileTree(props: {
     }
     if (root !== undefined) walk(root)
     return rows
-  }, [chainFor, data, expandedSet, root])
+  }, [chainFor, data, expandedSet, root, sort])
   visibleRowsRef.current = visibleRows
 
   /**
