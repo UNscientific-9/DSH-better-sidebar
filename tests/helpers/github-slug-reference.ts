@@ -65,13 +65,21 @@ export interface DocumentAnchors {
  * its ATX headings and its same-document link destinations. Fenced code is
  * skipped (a `#` inside a fence is a comment, not a heading) and so is the
  * trailing `#`-run of a closed ATX heading.
+ *
+ * Lines are split on CRLF as well as LF: this scanner reads the repo's own
+ * READMEs, and a Windows checkout (`core.autocrlf=true`, i.e. the `ci-windows`
+ * lane) hands it `\r\n`. Keeping the `\r` on the line made the closed-ATX
+ * pattern below match NOTHING — `.` does not match `\r`, and without the `m`
+ * flag `$` only matches at the very end of the string — so every README
+ * heading silently disappeared and the anchor specs compared the READMEs'
+ * tables of contents against an empty heading list.
  * @param text - the markdown source.
  */
 export function scanDocumentAnchors(text: string): DocumentAnchors {
   const headings: string[] = []
   const anchors: string[] = []
   let fence: string | null = null
-  for (const line of text.split('\n')) {
+  for (const line of text.split(/\r?\n/)) {
     const fenceLine = /^ {0,3}(`{3,}|~{3,})/.exec(line)
     const fenceMarker = fenceLine?.at(1)?.charAt(0)
     if (fenceMarker !== undefined) {
