@@ -35,6 +35,19 @@
 :global([data-dsh-panel-host]) {
   position: fixed;
   inset: 0;
+  /* Explicit viewport height — NOT a containing-block derivation (issue
+     #616). `inset: 0` alone sizes a fixed box from its containing block, and
+     a page-level `filter` / `backdrop-filter` / `transform` — exactly what a
+     glass skin puts on the shell wrapper or on <body> itself — REPLACES that
+     containing block with the ancestor's own padding box. The shell's content
+     is itself fixed/viewport-sized, so that box is zero-height: the host
+     collapses to 0px and the whole native right sidebar goes invisible while
+     its DOM (and every panel in it) is fully present. `vh` is measured
+     against the viewport instead, so the height survives any ancestor's
+     containing-block games; the over-constrained triple (top: 0 + height +
+     bottom: 0) resolves by ignoring `bottom`, keeping this a top-anchored
+     viewport-height layer. */
+  height: 100vh;
   z-index: 25;
   pointer-events: none;
   /* Clip at the viewport edge: collapsed panels slide off-screen with
@@ -42,7 +55,8 @@
      contributes to its ancestors' scrollable overflow — without this the
      hidden panels extended the document's scrollable area, making the whole
      page draggable left-right and up-down while any panel was collapsed.
-     The host is exactly viewport-sized (inset: 0), so the clip is invisible
+     The host is exactly viewport-sized (inset: 0 + the explicit 100vh
+     height above), so the clip is invisible
      until a panel slides in from the edge; internal scroll containers and
      the app's fixed overlay stack are unaffected. `clip`, not `hidden`: a
      hidden box stays a PROGRAMMATICALLY scrollable container, and a
