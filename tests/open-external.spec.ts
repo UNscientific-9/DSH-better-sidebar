@@ -4,6 +4,7 @@
  * OS handlers are not launched in unit tests.
  */
 import { EventEmitter } from 'node:events'
+import { dirname, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   launchExternal,
@@ -284,10 +285,11 @@ describe('launchExternal Windows branch order and failure reporting', () => {
 
   it('reports a reveal failure with the same shape (one branch, `path` subject)', async () => {
     const fake = recordingSpawn()
-    // Path absoluteness is checked with the HOST path module, so this case uses
-    // the linux branch (an absolute POSIX path) to pin the aggregated message
-    // of the reveal half.
-    const pending = launchExternal('reveal', '/a/b.txt', {
+    // The path is normalized and its parent derived with the HOST path module,
+    // so the fixture must be host-absolute too — a literal `/a/b.txt` is not an
+    // absolute path on Windows (win32 resolves it against the current drive).
+    const file = resolve('/', 'a', 'b.txt')
+    const pending = launchExternal('reveal', file, {
       platform: 'linux',
       wsl: false,
       spawn: fake.spawn,
@@ -296,7 +298,7 @@ describe('launchExternal Windows branch order and failure reporting', () => {
     const error = await pending.then(() => null, (reason: unknown) => reason)
 
     expect(fake.calls.map(call => ({ command: call.command, args: call.args }))).toEqual([
-      { command: 'xdg-open', args: ['/a'] },
+      { command: 'xdg-open', args: [dirname(file)] },
     ])
     expect((error as SidebarError).message).toBe(
       'failed to launch external opener for the path: "xdg-open" (spawn xdg-open ENOENT)',
