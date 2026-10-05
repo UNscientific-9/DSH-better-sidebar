@@ -5,6 +5,13 @@
  * table. The DOM half — ids on real rendered markdown, the host delegate's
  * click path, in-preview scrolling — lives in tests/markdown-surface.spec.tsx,
  * which renders the REAL TextEditor (and therefore the real host `MarkdownText`).
+ *
+ * Known narrow edges, recorded rather than fixed (module header carries the
+ * same note): a destination with an ESCAPED parenthesis (`[x](./a\(1\).md)`) or
+ * a single-quoted title (`[x](./a.md 'title')`) does not match the link grammar
+ * and is therefore never claimed — it keeps rendering as plain text, exactly as
+ * it did before this feature. A `#L24` line destination belongs to the host and
+ * is not turned into a line jump.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -34,31 +41,15 @@ function fileTarget(
 }
 
 describe('githubHeadingSlug', () => {
-  it('lower-cases, drops punctuation and collapses whitespace runs to one dash', () => {
+  // The full behavior table (no trim, no whitespace collapsing, emoji + VS16
+  // removal, parity with the real github-slugger regex, and the repos' own
+  // README anchors) lives in tests/markdown-slug.spec.ts. This is the smoke
+  // layer the rest of this file's cases lean on.
+  it('slugs like GitHub: each space its own dash, emoji and punctuation gone', () => {
     expect(githubHeadingSlug('Hello, World!')).toBe('hello-world')
-    expect(githubHeadingSlug('  Mixed   CASE  ')).toBe('mixed-case')
-    expect(githubHeadingSlug('API 参考 (v2)')).toBe('api-参考-v2')
-    expect(githubHeadingSlug('`code` & "quotes"')).toBe('code-quotes')
-    expect(githubHeadingSlug('Trailing punctuation:')).toBe('trailing-punctuation')
-  })
-
-  it('keeps Chinese text as its own id, like GitHub does', () => {
-    expect(githubHeadingSlug('中文标题')).toBe('中文标题')
-    expect(githubHeadingSlug('已核实的事实')).toBe('已核实的事实')
-    // The full-width colon is punctuation: it goes, the text stays.
-    expect(githubHeadingSlug('认领文件链接：在侧栏打开')).toBe('认领文件链接在侧栏打开')
-  })
-
-  it('keeps the dash and underscore GitHub keeps, and drops symbols', () => {
-    expect(githubHeadingSlug('Foo-Bar_Baz')).toBe('foo-bar_baz')
-    expect(githubHeadingSlug('C++ / C#')).toBe('c-c')
-    expect(githubHeadingSlug('🎉 Party')).toBe('party')
-  })
-
-  it('yields an empty slug for text with nothing to keep', () => {
+    expect(githubHeadingSlug('🎉 Party')).toBe('-party')
+    expect(githubHeadingSlug('🖼️ 特性巡礼')).toBe('-特性巡礼')
     expect(githubHeadingSlug('!!!')).toBe('')
-    expect(githubHeadingSlug('   ')).toBe('')
-    expect(githubHeadingSlug('')).toBe('')
   })
 })
 
@@ -195,6 +186,33 @@ describe('rewriteLocalMarkdownLinks', () => {
     // An image nested in a link label keeps its own destination.
     expect(rewriteLocalMarkdownLinks('[![alt](./pic.png)](./other.md#x)', DOC, CWD))
       .toBe('[![alt](./pic.png)](./other.md%23x)')
+  })
+
+  it('leaves every code-region form alone, tilde fences included', () => {
+    // CommonMark's two fence characters and both span widths. The `~~~` form is
+    // the one the first batch of this feature missed: its content was rewritten
+    // into `[y](./b.md%23u)` (a rendered-diff regression against 58d7f71).
+    const forms = [
+      // triple backticks
+      '```\n[y](./b.md#u)\n```',
+      // four backticks (a fence long enough to CONTAIN a triple one)
+      '````\n```\n[y](./b.md#u)\n```\n````',
+      // triple tildes — the missed one
+      '~~~\n[y](./b.md#u)\n~~~',
+      // an inline code span inside a tilde fence stays inside the fence
+      '~~~\nuse `[y](./b.md#u)` here\n~~~',
+    ]
+    for (const form of forms) {
+      expect(rewriteLocalMarkdownLinks(form, DOC, CWD), form).toBe(form)
+    }
+    // A longer closing fence closes, and prose after it is still rewritten.
+    expect(rewriteLocalMarkdownLinks('~~~\n[x](./b.md#u)\n~~~~\n\n[y](./b.md#v)', DOC, CWD))
+      .toBe('~~~\n[x](./b.md#u)\n~~~~\n\n[y](./b.md%23v)')
+    // An unclosed fence runs to the end of the document, like a renderer.
+    expect(rewriteLocalMarkdownLinks('~~~\n[x](./b.md#u)', DOC, CWD)).toBe('~~~\n[x](./b.md#u)')
+    // Tildes are only a fence at the START of a line: a `~~~` mid-line is prose,
+    // and a link after it is still claimed.
+    expect(rewriteLocalMarkdownLinks('[x](./b.md#u) ~~~ tail', DOC, CWD)).toBe('[x](./b.md%23u) ~~~ tail')
   })
 
   it('rewrites reference definitions, brackets included', () => {

@@ -17,6 +17,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act } from 'react-dom/test-utils'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { renderRoot, setupReactAct } from './test-utils.ts'
@@ -331,6 +333,103 @@ describe('the markdown preview surface', () => {
     mounted.unmount()
   })
 
+  it('scrolls the nearest SCROLLABLE ANCESTOR, not the container itself', () => {
+    // jsdom applies no stylesheet and derives no overflow from layout, so the
+    // one way to reach the "found an ancestor scroller" branch is to inject the
+    // computed style the browser would report. Without this case the branch was
+    // unreachable from the shipped suite: making `scrollHostFor` return the
+    // container unconditionally left all 33 cases green.
+    const scroller = document.createElement('div')
+    const container = document.createElement('div')
+    scroller.append(container)
+    document.body.append(scroller)
+    const containerScrollTop = watchScrollTop(container)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 100 })
+    scroller.scrollTop = 20
+    const computed = window.getComputedStyle.bind(window)
+    const style = vi.spyOn(window, 'getComputedStyle').mockImplementation(
+      (element: Element): CSSStyleDeclaration => {
+        const real = computed(element as HTMLElement)
+        if (element === scroller) {
+          return { ...real, overflowY: 'auto', overflow: 'auto' } as unknown as CSSStyleDeclaration
+        }
+        return { ...real, overflowY: 'visible', overflow: 'visible' } as unknown as CSSStyleDeclaration
+      },
+    )
+    try {
+      const target = document.createElement('h2')
+      container.append(target)
+      // The scroll offset is measured against the SCROLLER's own box and its
+      // live scrollTop: 480 - 100 + 20 - 8 = 392.
+      stubRectTop(scroller, 100)
+      stubRectTop(container, 100)
+      stubRectTop(target, 480)
+      expect(jumpToFragment(container, 'anything')).toBe(false) // no such id yet
+      target.id = 'found'
+      expect(jumpToFragment(container, 'found')).toBe(true)
+      expect(scroller.scrollTop).toBe(392)
+      // The container is NOT the scroller: it must not be written to at all.
+      expect(containerScrollTop()).toBe(0)
+      expect(scrollTo).not.toHaveBeenCalled()
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      style.mockRestore()
+    }
+  })
+
+  it('scrolls the container itself when no ancestor scrolls', () => {
+    // The fallback half of the same branch: with every ancestor reporting
+    // `visible`, the container is the scroller (no `window.scrollTo`, no
+    // `scrollIntoView` — either would drag the whole sidebar).
+    const mounted = mountEditor('[jump](#目标标题)\n\n## 目标标题\n', '/p/docs/README.md')
+    const surface = surfaceOf(mounted.container)
+    const scrollTop = watchScrollTop(surface)
+    stubRectTop(surface, 60)
+    stubRectTop(surface.querySelector('h2')!, 260)
+    click(fileLink(surface, '#目标标题')!)
+    expect(scrollTop()).toBe(192)
+    expect(scrollTo).not.toHaveBeenCalled()
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    mounted.unmount()
+  })
+
+  it('drives the ancestor scroller through the real surface too', () => {
+    // The same branch, end to end: the real TextEditor's own delegate, a click
+    // on a real rendered link, and the write landing on the surrounding pane.
+    const mounted = mountEditor('[jump](#目标标题)\n\n## 目标标题\n', '/p/docs/README.md')
+    const scroller = document.createElement('div')
+    document.body.append(scroller)
+    scroller.append(mounted.container)
+    const surface = surfaceOf(mounted.container)
+    const heading = surface.querySelector<HTMLElement>('h2#目标标题')!
+    const containerScrollTop = watchScrollTop(surface)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 100 })
+    const computed = window.getComputedStyle.bind(window)
+    const style = vi.spyOn(window, 'getComputedStyle').mockImplementation(
+      (element: Element): CSSStyleDeclaration => {
+        const real = computed(element as HTMLElement)
+        const overflowY = element === scroller ? 'auto' : 'visible'
+        return { ...real, overflowY, overflow: overflowY } as unknown as CSSStyleDeclaration
+      },
+    )
+    try {
+      stubRectTop(scroller, 0)
+      stubRectTop(surface, 0)
+      stubRectTop(heading, 300)
+      scroller.scrollTop = 0
+      click(fileLink(surface, '#目标标题')!)
+      expect(scroller.scrollTop).toBe(292)
+      expect(containerScrollTop()).toBe(0)
+      expect(scrollTo).not.toHaveBeenCalled()
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      style.mockRestore()
+    }
+    mounted.unmount()
+  })
+
   it('opens a line destination without treating its line as an anchor', async () => {
     // `#L24` is the host's own grammar (the parser hands it over as
     // `options.line`), so the rewriter must leave it alone and the open must
@@ -395,6 +494,44 @@ describe('the markdown preview surface', () => {
     await flushMicrotasks()
     expect(againScrollTop()).toBe(0)
     again.unmount()
+  })
+
+  it('resolves and scrolls for EVERY table-of-contents anchor of the repo\u2019s own READMEs', () => {
+    // The acceptance case for the slug fix, through the real renderer: the
+    // READMEs are the documents whose anchors were 0/15 before it (the heading
+    // `🚀 安装` got the id `安装` while its contents entry pointed at `#-安装`,
+    // so the click was claimed and then did nothing). The probe takes each
+    // TOC bullet's link, finds the heading with that very id, and requires the
+    // click to move the surface's own scroller.
+    for (const name of ['README.md', 'README_EN.md']) {
+      const mounted = mountEditor(readFileSync(join(process.cwd(), name), 'utf8'), `/p/${name}`)
+      const surface = surfaceOf(mounted.container)
+      const headings = [...surface.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+      const tocLines = readFileSync(join(process.cwd(), name), 'utf8').split('\n').slice(34, 44)
+      const tocAnchors = tocLines.flatMap(line => [...line.matchAll(/\]\((#[^)\s]*)\)/g)])
+        .map(match => match[1] ?? '')
+        .filter(anchor => anchor !== '')
+      expect(tocAnchors.length, name).toBeGreaterThanOrEqual(15)
+
+      stubRectTop(surface, 0)
+      const readScrollTop = watchScrollTop(surface)
+      const unresolved: string[] = []
+      for (const anchor of tocAnchors) {
+        const fragment = decodeURIComponent(anchor.slice(1))
+        const heading = headings.find(candidate => candidate.id === fragment)
+        const link = [...surface.querySelectorAll<HTMLButtonElement>('button')].find(button => button.title === anchor)
+        if (heading === undefined || link === undefined) {
+          unresolved.push(`${anchor} (id=${heading === undefined ? 'missing' : 'ok'}, link=${link === undefined ? 'missing' : 'ok'})`)
+          continue
+        }
+        stubRectTop(heading, 300)
+        surface.scrollTop = 0
+        click(link)
+        if (readScrollTop() === 0) unresolved.push(`${anchor} (click did not scroll)`)
+      }
+      expect(unresolved, name).toEqual([])
+      mounted.unmount()
+    }
   })
 })
 

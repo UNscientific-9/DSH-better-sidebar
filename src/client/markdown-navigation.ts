@@ -35,7 +35,18 @@
  * document, which does not exist yet — so the fragment is parked by session +
  * absolute path and taken by the target's own surface once it mounts. The
  * host's routing is untouched.
+ *
+ * KNOWN NARROW EDGES (deliberate, recorded rather than fixed — neither one
+ * corrupts anything):
+ * - A destination containing an ESCAPED parenthesis (`[x](./a\(1\).md)`) or a
+ *   single-quoted title (`[x](./a.md 'title')`) does not match the link grammar
+ *   below, so {@link rewriteLocalMarkdownLinks} never claims it. It keeps
+ *   rendering as plain text — exactly what it did before this feature existed,
+ *   i.e. no regression, but also no jump.
+ * - A `#L24` line destination is left to the host (it rides `options.line`), so
+ *   nothing scrolls the opened file to line 24.
  */
+import { maskCodeRegions } from './markdown-code.ts'
 import { normalizeLocalPath } from './markdown-images.ts'
 import { isAbsolutePath } from './paths.ts'
 
@@ -126,21 +137,42 @@ function separatorOf(destination: string): FragmentSeparator | null {
 }
 
 /**
- * The GitHub heading slug of one heading's text: trimmed, lower-cased,
- * punctuation and symbols dropped (`-` and `_` survive — GitHub's own slugger
- * keeps both), whitespace runs collapsed to a single dash, and every letter,
- * digit and combining mark of ANY script kept — so a Chinese heading keeps its
- * own text as its id, exactly like GitHub does.
+ * The characters GitHub's heading slug DROPS beyond punctuation and symbols:
+ * pictographs (every emoji), the variation selectors that follow a good many of
+ * them (`🖼️` is U+1F5BC + U+FE0F — GitHub's own pipeline renders an emoji as an
+ * `<img>`, so neither character reaches the slug text), regional-indicator pairs
+ * (flag emoji, which are `\p{So}` but outside `Extended_Pictographic`), and the
+ * control/format/unassigned characters. Combining marks are deliberately NOT
+ * here — `\p{M}` survives, as it does on GitHub.
+ */
+// eslint-disable-next-line no-misleading-character-class -- the ranges are deliberate, not a mis-ordered surrogate pair
+const DROPPED_EXTRA_RE = /[\p{Extended_Pictographic}\u{1F000}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{1F1E6}-\u{1F1FF}\p{C}]/gu
+
+/**
+ * The GitHub heading slug of one heading's text — the id GitHub itself would
+ * give that heading, so the anchors a README's table of contents carries
+ * resolve. GitHub's slugger (`github-slugger`) lower-cases ASCII, drops
+ * punctuation and symbols, and turns EACH space into its own `-`; it does not
+ * trim and does not collapse runs, which is why `## 🛠️ Development & Build`
+ * has the id `-development--build` (the leading dash is the space the emoji
+ * left behind, the double dash is the removed `&`). Letters, digits and
+ * combining marks of ANY script survive, so a Chinese heading keeps its own
+ * text as its id.
+ *
+ * The one deliberate difference from `github-slugger` is where the emoji are
+ * removed: GitHub strips them while rendering the heading (to `<img>`), before
+ * the slugger ever sees the text, so a slugger run on plain text would keep
+ * `🚀` and produce `🚀-安装` instead of GitHub's real `-安装`. This function
+ * drops them here, in the same pass, which yields GitHub's actual ids.
  * @param text - the heading's rendered text.
  * @returns the slug (`''` for a heading with no letters or digits at all).
  */
 export function githubHeadingSlug(text: string): string {
   return text
-    .trim()
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
-    .trim()
-    .replace(/\s+/g, '-')
+    .replace(DROPPED_EXTRA_RE, '')
+    .replace(/[^\p{L}\p{N}\p{M} _-]/gu, '')
+    .replace(/ /g, '-')
 }
 
 /**
@@ -284,7 +316,8 @@ function rewriteDestination(destination: string, docPath: string | undefined, cw
  * a claimed `.md`/`.markdown` destination gets its heading fragment carried as
  * `%23`, and every other local destination gets the `?` that keeps it inert.
  *
- * Code spans and fenced blocks are masked first, so documentation that
+ * Code regions are masked first (see `maskCodeRegions` — fenced blocks opened
+ * by ``` ``` ``` OR `~~~`, and inline code spans), so documentation that
  * demonstrates `[x](./a.md#标题)` is not mutated. Image destinations are left
  * to `rewriteLocalImageUrls` (which must run FIRST: it rewrites the definitions
  * an image uses into absolute media URLs, which this pass then ignores).
@@ -298,10 +331,7 @@ export function rewriteLocalMarkdownLinks(
   docPath: string | undefined,
   cwd: string | undefined,
 ): string {
-  const masks: string[] = []
-  const masked = text
-    .replace(/```[\s\S]*?```/g, (block) => { masks.push(block); return `\u0000${masks.length - 1}\u0000` })
-    .replace(/`[^`\n]*`/g, (span) => { masks.push(span); return `\u0000${masks.length - 1}\u0000` })
+  const { masked, restore } = maskCodeRegions(text)
 
   const links = masked
     // Inline links. The negative lookbehind keeps IMAGE destinations out, and
@@ -329,8 +359,7 @@ export function rewriteLocalMarkdownLinks(
       },
     )
 
-  // eslint-disable-next-line no-control-regex -- NUL is the deliberate mask sentinel (cannot appear in source markdown)
-  return links.replace(/\u0000(\d+)\u0000/g, (_m, index: string) => masks[Number(index)] ?? '')
+  return restore(links)
 }
 
 /**
