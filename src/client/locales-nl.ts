@@ -116,6 +116,8 @@ export const nl: Record<string, string> = {
   closeOtherTabs: 'Andere tabbladen sluiten',
   closeLeftTabs: 'Tabbladen links sluiten',
   closeRightTabs: 'Tabbladen rechts sluiten',
+  closeAllTabs: 'Alle tabbladen sluiten',
+  revealTabInFileManager: 'Bestand tonen in bestandsbeheerder',
   pinTerminal: 'Terminal vastmaken',
   pinAgentTerminal: 'Agent-terminal vastmaken',
   pinToWorkspace: 'Vastmaken aan werkruimte',

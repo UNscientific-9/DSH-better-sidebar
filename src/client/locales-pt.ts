@@ -101,6 +101,8 @@ export const pt: Record<string, string> = {
   closeOtherTabs: 'Fechar outras abas',
   closeLeftTabs: 'Fechar abas à esquerda',
   closeRightTabs: 'Fechar abas à direita',
+  closeAllTabs: 'Fechar todas as abas',
+  revealTabInFileManager: 'Mostrar arquivo no gerenciador de arquivos',
   pinTerminal: 'Fixar Terminal',
   pinAgentTerminal: 'Fixar Terminal do Agent',
   pinToWorkspace: 'Fixar no Workspace',

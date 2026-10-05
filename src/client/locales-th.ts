@@ -118,6 +118,8 @@ export const th: Record<string, string> = {
   closeOtherTabs: 'ปิด Tab อื่น',
   closeLeftTabs: 'ปิด Tab ด้านซ้าย',
   closeRightTabs: 'ปิด Tab ด้านขวา',
+  closeAllTabs: 'ปิด Tab ทั้งหมด',
+  revealTabInFileManager: 'แสดงไฟล์ในตัวจัดการไฟล์',
   pinTerminal: 'ปักหมุดเทอร์มินัล',
   pinAgentTerminal: 'ปักหมุดเทอร์มินัล Agent',
   pinToWorkspace: 'ปักหมุดไปยังพื้นที่ทำงาน',

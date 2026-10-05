@@ -104,6 +104,8 @@ export const de: Record<string, string> = {
   closeOtherTabs: 'Andere Tabs schließen',
   closeLeftTabs: 'Tabs links schließen',
   closeRightTabs: 'Tabs rechts schließen',
+  closeAllTabs: 'Alle Tabs schließen',
+  revealTabInFileManager: 'Datei im Dateimanager anzeigen',
   pinTerminal: 'Terminal anheften',
   pinAgentTerminal: 'Agent-Terminal anheften',
   pinToWorkspace: 'An Arbeitsbereich anheften',

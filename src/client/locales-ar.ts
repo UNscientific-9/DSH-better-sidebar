@@ -119,6 +119,8 @@ export const ar: Record<string, string> = {
   closeOtherTabs: 'إغلاق التبويبات الأخرى',
   closeLeftTabs: 'إغلاق التبويبات على اليسار',
   closeRightTabs: 'إغلاق التبويبات على اليمين',
+  closeAllTabs: 'إغلاق كل التبويبات',
+  revealTabInFileManager: 'إظهار الملف في مدير الملفات',
   pinTerminal: 'تثبيت الطرفية',
   pinAgentTerminal: 'تثبيت طرفية Agent',
   pinToWorkspace: 'تثبيت إلى مساحة العمل',

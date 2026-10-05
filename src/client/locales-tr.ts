@@ -118,6 +118,8 @@ export const tr: Record<string, string> = {
   closeOtherTabs: 'Diğer sekmeleri kapat',
   closeLeftTabs: 'Soldaki sekmeleri kapat',
   closeRightTabs: 'Sağdaki sekmeleri kapat',
+  closeAllTabs: 'Tüm sekmeleri kapat',
+  revealTabInFileManager: 'Dosyayı dosya yöneticisinde göster',
   pinTerminal: 'Terminali Sabitle',
   pinAgentTerminal: 'Agent Terminalini Sabitle',
   pinToWorkspace: 'Çalışma Alanına Sabitle',

@@ -47,6 +47,7 @@ import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
 import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
+import { createOpenInApp } from './open-in-app.ts'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
@@ -569,6 +570,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     referenceInChatShared(ctx, sessionId, path, isDir)
   }, [ctx, sessionId])
 
+  /**
+   * The tab context menu's "reveal in the file manager" row. The host's
+   * open-in-app capability is the ONLY path this plugin reveals through
+   * (`ctx.remote.session.openWorkspacePath({action:'reveal'})`, shared with
+   * the explorer's own reveal row via `createOpenInApp`); a deployment
+   * without a desktop (plain web) answers false, which is logged and
+   * otherwise a no-op — the bottom panel has no error strip to write to, and
+   * a failed reveal must never take the strip down. Defined above the
+   * no-session early return — a hook must never sit behind a conditional
+   * return (React counts hooks per render).
+   */
+  const openInApp = useMemo(() => createOpenInApp(ctx), [ctx])
+  const revealTabFile = useCallback((path: string): void => {
+    void openInApp.reveal(path).then((ok) => {
+      if (!ok) console.error(`[dsh-better-sidebar] reveal in file manager failed: ${path}`)
+    }).catch((error: unknown) => {
+      console.error('[dsh-better-sidebar] reveal in file manager error:', error)
+    })
+  }, [openInApp])
+
   if (state === undefined || sessionId === undefined) {
     // No conversation yet: the host stays mounted (the drag shield keeps
     // covering the region) but nothing is rendered — the toggle button lives
@@ -769,6 +790,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
             getTabRightActions={tabRightActionsOf}
+            onRevealInFileManager={revealTabFile}
           />
         </div>
       </div>

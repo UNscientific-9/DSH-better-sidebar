@@ -120,6 +120,8 @@ export const pl: Record<string, string> = {
   closeOtherTabs: 'Zamknij inne karty',
   closeLeftTabs: 'Zamknij karty po lewej',
   closeRightTabs: 'Zamknij karty po prawej',
+  closeAllTabs: 'Zamknij wszystkie karty',
+  revealTabInFileManager: 'Pokaż plik w menedżerze plików',
   pinTerminal: 'Przypnij Terminal',
   pinAgentTerminal: 'Przypnij Terminal Agent',
   pinToWorkspace: 'Przypnij do obszaru roboczego',
