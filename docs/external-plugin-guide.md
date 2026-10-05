@@ -15,6 +15,7 @@
 - `registerTab` / `registerFileViewer` 签名不变；
 - `openTab` / `openFile` 默认落到原生右侧栏；新增可选 `OpenTabSeed.target`（`'right'` 默认 / `'bottom'` 落插件的底部工作台 / `'side'` 落**原生栏的第二个格**，见下表「在侧边打开」）；
 - `updateTab` / `closeTab` / `activateTab` 认识原生 tab id（插件为每个原生 tab 维护一条合成 `SidebarTab` 记录，`tab.meta` / `tab.path` 的写入照旧生效）；`activateTab` 对原生 tab 经宿主 `ISidebarRight.focus`（dsh ≥ 0.1.5）聚焦 tab 及其所在 pane——多实例外部插件 tab（无 `(kind, 地址)` 身份可重开）因此也能被程序化唤起到前台。
+- 新增可选 `OpenTabSeed.reveal: false`（只放置、不聚焦，后台激活用）与配套的 `clearUnread(type, sessionId)`（消除「有新页面」红点），两者均 **v0.25.0+**。
 
 行为差异（写在这里以免踩坑）：
 
@@ -776,6 +777,13 @@ interface BetterSidebarService {
   /** 激活一个已打开的 tab（tab 栏点击路径；触发 descriptor.onActivate；
    *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
   activateTab(tabId: string, scope?: SessionScope): void
+  /** 消除某个 tab 类型在一个会话里的「有新页面」红点（读者刚看过那一页，
+   *  v0.25.0+）。红点由插件自己的后台激活路径点亮（配合 `OpenTabSeed.reveal:
+   *  false`），这里是「清除」那一半：承载面渲染了带标记的 tab，就该把它关掉。
+   *  未标记的类型是严格 no-op（不通知、不落盘），所以可以在每次可见性变化时
+   *  直接调用。底部工作台经 `activateTab` 清除（在那里点击本身就是激活），
+   *  原生栏芯片是调用方；`sessionId` 是具名的（原生面同时挂着多个会话）。 */
+  clearUnread(type: TabType, sessionId: string): void
   /** 在 scope.sessionId 的侧边栏编辑器打开一个文件（title 缺省为文件名；
    *  id 按路径派生（`editor:` + path），与内置 open-path 拦截一致，不同文件可并排打开）。
    *  注意：path 派生 id 只对 openFile/openSidebarFile 成立；editorExplorer 合并模式的
@@ -807,6 +815,12 @@ interface OpenTabSeed {
    *  已打开的同名资源并存，所以「在侧边打开同一个文件」真的会新开一格。
    *  path-less 的 editor seed 是文件页（files），'side' 只影响带 path 的打开。*/
   target?: 'right' | 'bottom' | 'side'
+  /** 这次打开是否允许**聚焦**（只对 `target: 'right'` 有意义：底部工作台的
+   *  打开本来就落在它自己的格子里）。缺省 true——面向消费者的打开都是「给我
+   *  看这个」。后台激活（新子代理 / 新后台任务）传 false：宿主只把页面放进去、
+   *  不抢焦点，读者正在看的那一页因此活下来，调用方改用未读红点提示（见
+   *  `clearUnread`）。v0.25.0+ */
+  reveal?: boolean
 }
 
 /** 文件图标注册描述符（v0.19.0+，features 含 'fileIcons'）。 */
@@ -975,7 +989,7 @@ ctx.effect(() =>
 )
 ```
 
-> ⚠️ **`toggles` 的 key 必须是本插件 `PrefsSchema` 的字段**（`PrefsSchema` 已并入本插件 Loader 行的 `Config`；内置键：`autoOpenSubagent` / `autoOpenJobs` / `tasksViewMode` / `mobileNoAutoOpen` / `mobileDefaultTree` / `agentOpenTools` / `editorExplorer` / `editorGitGutter` / `explorerExclude` / `titleBarScheme` / `titleBarPresetId` / `customCss` / `titleBarCompat` / `titleBarStripPx` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `tabsEnabled` / `viewersEnabled` / `pluginSettings`；**已删除**：`workspaceFence`（v0.23.0，围栏整体移除，见 §8.1）/ `agentTerminalTools` / `terminalShell` / `terminalShellArgs` / `terminalFontFamily` / `terminalFontSize` / `bottomPanelAutoTerminal` / `browserNoSandbox` / `browserAllowedLoopback` / 三个按协议分流的旧外链接管键）。**v0.12.0 起设置 seam 已开放**：你自己的设置走 `pluginToggles`（声明式行）或 `render`（自定义面板），值持久化在 `pluginSettings[id]`——不再需要本插件的 schema 字段，也不再被 seam 丢弃。值须 JSON 可序列化（行控件只产出 string/number/boolean；自定义面板自行负责）。
+> ⚠️ **`toggles` 的 key 必须是本插件 `PrefsSchema` 的字段**（`PrefsSchema` 已并入本插件 Loader 行的 `Config`；内置键：`autoOpenSubagent` / `autoOpenJobs` / `tasksViewMode` / `mobileNoAutoOpen` / `mobileDefaultTree` / `agentOpenTools` / `editorExplorer` / `editorGitGutter` / `explorerExclude` / `customCss` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `tabsEnabled` / `viewersEnabled` / `pluginSettings`；**已删除**：`workspaceFence`（v0.23.0，围栏整体移除，见 §8.1）/ `titleBarScheme` / `titleBarPresetId` / `titleBarCompat` / `titleBarStripPx`（titleBar 让位机制整体移除，见 §12.1）/ `agentTerminalTools` / `terminalShell` / `terminalShellArgs` / `terminalFontFamily` / `terminalFontSize` / `bottomPanelAutoTerminal` / `browserNoSandbox` / `browserAllowedLoopback` / 三个按协议分流的旧外链接管键）。**v0.12.0 起设置 seam 已开放**：你自己的设置走 `pluginToggles`（声明式行）或 `render`（自定义面板），值持久化在 `pluginSettings[id]`——不再需要本插件的 schema 字段，也不再被 seam 丢弃。值须 JSON 可序列化（行控件只产出 string/number/boolean；自定义面板自行负责）。
 
 ### 8.2 宿主设置表单（DSH 0.1.7+：`SettingsForms`）
 
@@ -1091,14 +1105,12 @@ interface SettingsDescriptor {
 - **终端/编辑器表面**：`effectiveTokenValue` 读 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明值回退不透明底色（文字不叠背景画，issue #90）；≥ 0.9 放行。
 - **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
 - **布局变量**（`<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`。右面板宽度 = AppFrame 的 `padding-right` 预留（新版 `#root [data-dsh-frame]` / rc.8 `#root > [data-slot="root"] > div` 双锚点），AppFrame border box 保持完整桌面视口宽度（Harness 以此判定桌面/窄屏布局，避免插件面板展开误入窄屏）；AppFrame 的 details 拖拽手柄按同一变量向左平移贴合列边缘。底部面板仍走 centerCol `margin-bottom`；centerCol 锚点 = **JS 标注**（禁止 `nth-child`）：侧栏 shell 的定位器给测得的 centerCol 节点打 `[data-dsh-center-col]` 标签（`Sidebar.tsx` locate，节点更换/HMR 时随 ref 迁移），`layout.css` 用 `#root [data-dsh-center-col]` 选中（`drag-layout.e2e.ts` 断言恰一节点且为对话槽宿主的父级——alpha.2 起 shell 把 `#root [data-slot="main.conversation"]` 解析进列并跳过 `display: contents` 祖先（`center-column.ts` 的 `CENTER_COLUMN_SELECTOR` 同时认 `main.conversation` 与 alpha.1 的 `conversation`），定位器从槽宿主向上取第一个非 `contents` 的祖先；frame 宽度与桌面 Session Log 由 `desktop-layout.e2e.ts` 断言）。
-- **桌面信号与标题栏**（v0.14.1+ 四方案模型 `SidebarPrefs.titleBarScheme`，唯一决策点 `src/client/titlebar-strip.ts` 纯函数）：
-  - 壳信号（只读，不自动触发修改）：URL `dsh-desktop-mode`（`compatibility` / `extended` / `advanced`）/ `dsh-desktop-platform` / 可选 `dsh-desktop-titlebar-inset`（0–120 clamp）；官方 Electron 壳还会提供**客户端服务** `ctx.desktopWindow`（`mode` / `platform` / `material` / `safeAreaInsets` / `dragRegion`，见 anywhere-labs/dsh-desktop 的 `plugin-services` 文档）。插件侧以结构化镜像探测它（`src/context-types.ts` 的 `SidebarDesktopWindowService` + `src/client/desktop-env.ts` 的 `probeDesktopWindow`），**绝不写进 `dsh.client.inject`**——普通浏览器没有该服务，注入它会让整个插件 pending。
-  - **strip 取值链**：⓪ `web` 方案强制 0；① **壳自带窗口契约**（`ctx.desktopWindow` 存在时以 `safeAreaInsets.top` 为权威：compatibility / extended 报 0——壳已把整个页面放在自己的 36px frame 之下，插件**不得**再让位一次；advanced 报它画进内容里的 caption 行高度，macOS 20 / win32 32）；② `navigator.windowControlsOverlay` 真实几何（`wco.ts` 订阅 `geometrychange`，**为 0 也权威**，`visible=false` 幽灵 API 视为缺失）；③ URL inset（**只在壳没提供上面的服务时生效**，即旧壳）；④ 壳预设 `stripFor`（仅 `preset`）；⑤ 手动 `titleBarStripPx`（仅 `custom`）；⑥ 0。驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`。
-  - **四方案**：`auto`（默认，保守：壳提供了 `ctx.desktopWindow` 就用壳的真实几何，否则只信 WCO——"为某壳做的兼容在另一个壳会再坏"，核心不做壳专属分支）/ `web`（强制 0）/ `preset`（`src/client/shell-presets.ts`，准入：issue/PR 提及且 GitHub ⭐>100；命中环境显示「已检测」后缀，绝不自动启用）/ `custom`（用户 CSS + 手动 px，齿轮弹窗）。
-  - **迁移**：`titleBarScheme` 无默认值；旧文档已有值（`titleBarCompat === true` 或 `titleBarStripPx` 非 40）→ 迁 `custom`；干净文档 → `auto`。
-  - **用户空间 CSS**：预设/自定义 css 注入 `<style data-dsh-preset-css|data-dsh-custom-css>` 到 head 末尾（后写胜出；覆盖 JS 内联需 `!important`），fiber 卸载即移除。稳定寻址面：`[data-dsh-toggle-cluster]` / `[data-dsh-panel]` / `[data-dsh-bottom-panel]`。
-  - **拖拽区退出**：交互 chrome（`.toggleCluster` / `.toggleButton` / `.tabBar`）统一 `-webkit-app-region: no-drag`（无边框壳拖拽带吞点击，#103/#111）。
-  - **拖拽区退出（视口层）**：宿主把每个**直挂 body 的子元素**都设成 `no-drag`（`html[data-platform=darwin] body > :not(#root)`，选择器含 id，只能靠 `!important` 压过），而 app-region **无视 `pointer-events`**——插件宿主就是这样一个 body 子元素，在 Electron 里该值还会传到它内部的**铺满视口的面板层**（#772 的 CDP 实测；挂载 lane 用的浏览器引擎不传播该属性，所以面板层自己也声明了同一条规则），于是它把下面每条 `[data-window-drag]` 拖拽带一起抵消（窗口拖一次就失效，同时丢掉 macOS 双击标题栏缩放，issue #772）。契约：装饰性的视口层用**中性值** `-webkit-app-region: initial !important` 退出计算（`initial` 的计算值 `none` 不扣减拖拽区；注意**字面量 `none` 不是中性值**——它计算成 `no-drag`，是扣减值），层内的面板/控件再声明 `no-drag` 保住点击；当前覆盖 `[data-dsh-better-sidebar]`、`[data-dsh-panel-host]`（`> *` 保持 `no-drag`）与 `.mermaidModal`（放大视图是第二个**持久**铺满视口的 body 直挂层）。**交互弹层不要加 `initial`**（`.selectionPopup` 是 `<button>`，`FloatingWindow` / `AnchoredPopover` 自带指针拖拽、不是遮罩层）：宿主 `:is(button, a, input, …)` 已给它们 `no-drag`，反过来声明 `initial !important` 会让按下变成拖窗（重演 #103/#111）。放大视图是**遮罩层例外**——它是模态，只有其中的控件必须保持 `no-drag`；代价是它覆盖在顶部拖拽带上时，点背景会变成拖窗而不是关闭（为「放大图时窗口仍可拖」付的账）。**未纳入**：`FileTree` 的 `.uploadDropChatHint` 同样是 body 直挂的装饰层，但它只在 OS 文件拖拽悬停期间存在且 `pointer-events: none`，收益极小、暂不处理（`FloatingWindow` / `AnchoredPopover` 是交互层，按上面的判据本就该保持 `no-drag`）。形状由 `tests/panel-host-css.spec.ts` 在 Linux 的 `pnpm test` 里守护（无 macOS runner；`tests/theme.spec.ts` 只守颜色，故本轮不涉及），真实级联由挂载 lane 的探针按宿主规则断言计算值（面板宿主探针复现宿主两条 darwin 规则，放大视图探针直接用页面里宿主自己的规则）。
+- **用户空间 CSS（v0.14.1+；titleBar 让位机制移除后只剩它）**：`SidebarPrefs.customCss`（设置页「自定义 CSS」分组）注入 `<style data-dsh-custom-css="custom">` 到 head 末尾（后写胜出；覆盖 JS 内联需 `!important`），fiber 卸载即移除，**非空即生效**（不再有方案门控）。稳定寻址面：`[data-dsh-toggle-cluster]` / `[data-dsh-panel]` / `[data-dsh-bottom-panel]`。
+  - **已移除：位置兼容模式 / titleBar 让位机制**（v0.14.1 引入，本次整体删除，见 [docs/plans/2026-10-05-remove-titlebar-compat-strip.md](plans/2026-10-05-remove-titlebar-compat-strip.md)）。历史模型是四方案 `titleBarScheme`（`auto` / `web` / 壳预设 / `custom`），由 `src/client/titlebar-strip.ts` 的纯函数按「壳自带 `ctx.desktopWindow` 契约 → `navigator.windowControlsOverlay` 真实几何 → URL `dsh-desktop-titlebar-inset` → 壳预设 → 手动 px」求出顶栏让位高度，写 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`。删除原因：插件自 v0.19.0 起不再自绘顶部 chrome，**CSS 里没有任何规则读这两个值**，宿主也不读这条契约（用户想移动的侧边栏按钮是宿主原生控件，插件没有它的位置 API），于是改设置只写变量、什么都不动；而设置项描述与现实不符。
+  - **对消费插件的影响**：不要引用 `SidebarPrefs.titleBarScheme` / `titleBarPresetId` / `titleBarCompat` / `titleBarStripPx`（`toggles` 里声明它们会被当成未知键），也不要写 `--dsh-title-bar-strip` / `body[data-dsh-title-bar-compat]`（无人消费）。桌面壳仍会戳 URL（`dsh-desktop-mode` / `-platform` / `-titlebar-inset`）并提供 `ctx.desktopWindow`/`navigator.windowControlsOverlay`，但**本插件一律不再读**——需要顶部几何的插件请自己探测，注意 `ctx.desktopWindow` 是可选客户端服务，**绝不能写进 `dsh.client.inject`**（普通浏览器没有它，注入会让插件永远 pending）。
+  - 旧偏好数据安全：已删的四个键在宿主 schema 里是未知键（OPEN），解析不报错、不写回；客户端 `parsePrefs` 只按声明字段构造，它们不会进入 UI（`tests/prefs.spec.ts` / `tests/plugin-shape.spec.ts` 守护）。
+- **拖拽区退出**：交互 chrome（`.toggleCluster` / `.toggleButton` / `.tabBar`）统一 `-webkit-app-region: no-drag`（无边框壳拖拽带吞点击，#103/#111）。
+- **拖拽区退出（视口层）**：宿主把每个**直挂 body 的子元素**都设成 `no-drag`（`html[data-platform=darwin] body > :not(#root)`，选择器含 id，只能靠 `!important` 压过），而 app-region **无视 `pointer-events`**——插件宿主就是这样一个 body 子元素，在 Electron 里该值还会传到它内部的**铺满视口的面板层**（#772 的 CDP 实测；挂载 lane 用的浏览器引擎不传播该属性，所以面板层自己也声明了同一条规则），于是它把下面每条 `[data-window-drag]` 拖拽带一起抵消（窗口拖一次就失效，同时丢掉 macOS 双击标题栏缩放，issue #772）。契约：装饰性的视口层用**中性值** `-webkit-app-region: initial !important` 退出计算（`initial` 的计算值 `none` 不扣减拖拽区；注意**字面量 `none` 不是中性值**——它计算成 `no-drag`，是扣减值），层内的面板/控件再声明 `no-drag` 保住点击；当前覆盖 `[data-dsh-better-sidebar]`、`[data-dsh-panel-host]`（`> *` 保持 `no-drag`）与 `.mermaidModal`（放大视图是第二个**持久**铺满视口的 body 直挂层）。**交互弹层不要加 `initial`**（`.selectionPopup` 是 `<button>`，`FloatingWindow` / `AnchoredPopover` 自带指针拖拽、不是遮罩层）：宿主 `:is(button, a, input, …)` 已给它们 `no-drag`，反过来声明 `initial !important` 会让按下变成拖窗（重演 #103/#111）。放大视图是**遮罩层例外**——它是模态，只有其中的控件必须保持 `no-drag`；代价是它覆盖在顶部拖拽带上时，点背景会变成拖窗而不是关闭（为「放大图时窗口仍可拖」付的账）。**未纳入**：`FileTree` 的 `.uploadDropChatHint` 同样是 body 直挂的装饰层，但它只在 OS 文件拖拽悬停期间存在且 `pointer-events: none`，收益极小、暂不处理（`FloatingWindow` / `AnchoredPopover` 是交互层，按上面的判据本就该保持 `no-drag`）。形状由 `tests/panel-host-css.spec.ts` 在 Linux 的 `pnpm test` 里守护（无 macOS runner；`tests/theme.spec.ts` 只守颜色，故本轮不涉及），真实级联由挂载 lane 的探针按宿主规则断言计算值（面板宿主探针复现宿主两条 darwin 规则，放大视图探针直接用页面里宿主自己的规则）。
 - **z-index**：面板宿主层 25、按钮簇 45——低于 DSH ui-cordis 插件面板（30）与浮层栈（100/1000+），浮层天然盖住侧边栏。
 
 ### 12.2 注意事项

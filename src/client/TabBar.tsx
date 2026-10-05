@@ -70,6 +70,14 @@ export function TabBar(props: {
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
   /**
+   * Unread resolver for tab labels: the page has something the reader has not
+   * looked at yet (a background activation opened it without taking the column
+   * over). Rendered as a small dot beside the label; `false`/undefined draws
+   * nothing, so a strip with no marks is byte-identical to one that never had
+   * the feature.
+   */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  /**
    * Right-aligned action area resolver for the active tab: returns a
    * ReactNode rendered at the tab strip's right end (between the + button
    * and the panel's close control), or null/undefined for none. Lets a
@@ -91,6 +99,7 @@ export function TabBar(props: {
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, getTabRightActions,
+    isTabUnread,
     onRevealInFileManager,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -251,6 +260,16 @@ export function TabBar(props: {
             {getTabIcon?.(tab) ?? null}
             {getTabBadge?.(tab) ?? null}
             <span className={css.tabTitle}>{tab.title}</span>
+            {isTabUnread?.(tab) === true
+              ? (
+                <span
+                  className={css.tabUnreadDot}
+                  role="img"
+                  aria-label={t('tabUnread')}
+                  title={t('tabUnread')}
+                />
+              )
+              : null}
             <button
               type="button"
               className={css.tabClose}

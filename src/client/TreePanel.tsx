@@ -6,9 +6,10 @@
  * search is free — the tree keeps its level cache and the live directory
  * watcher (the old conditional render dropped both and refetched the whole
  * visible set on every query change). Owns its refresh tick: the icon next to
- * the search input clears the tree cache. EditorHost docks it as the tab's
- * right panel (wrapped in a drag-resize handle) and provides the file
- * context-menu open escapes.
+ * the search input clears the tree cache, and the sort menu beside it owns the
+ * tree's row order (passed down; the default is the host's own order).
+ * EditorHost docks it as the tab's right panel (wrapped in a drag-resize
+ * handle) and provides the file context-menu open escapes.
  *
  * Uploads (header pickers, the tree's drag-drop and "upload here" menu)
  * all funnel through here: one session at a time, shown in a full-window
@@ -20,11 +21,12 @@
  */
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
 import { ancestorDirs } from './state.ts'
 import { FileTree } from './FileTree.tsx'
+import { DEFAULT_FILE_TREE_SORT, type FileTreeSort } from './file-tree-sort.ts'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenInApp } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
@@ -67,7 +69,9 @@ export function TreePanel(props: {
   openWithTargets?: OpenWithTarget[]
   openWithPinned?: string[]
   openWithSsh?: boolean
-  onOpenWith?: (targetId: string, path: string) => void
+  /** Open one plugin target (passed through to FileTree; `false`/rejection →
+   *  the tree reports the failure in its strip). */
+  onOpenWith?: (targetId: string, path: string) => void | boolean | Promise<void | boolean>
   onToggleOpenWithPin?: (targetId: string) => void
   /** Show the plugin's own open-with targets even when the host lists local
    *  applications for the path (the `openWithPluginTargets` setting; passed
@@ -101,6 +105,13 @@ export function TreePanel(props: {
   const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+  /**
+   * The explorer's row order (the header's sort control). Starts at the
+   * default — name order, folders first — which is the order the host already
+   * returns, so the tree looks exactly as it did before the control existed.
+   */
+  const [sort, setSort] = useState<FileTreeSort>(DEFAULT_FILE_TREE_SORT)
+  const [sortOpen, setSortOpen] = useState(false)
 
   // The tree caches loaded directories per refresh tick, so content changed
   // outside DSH (another editor, a sync tool) stays stale until the manual
@@ -244,6 +255,41 @@ export function TreePanel(props: {
           icon={<IconRefreshOutlineRegular size={14} />}
           onClick={() => { setRefreshTick(tick => tick + 1) }}
         />
+        {/* Row order: the two keys are one choice (check mark), the
+            folders-first switch is independent — the same two-group menu the
+            host's own menus use. Picking a row closes the menu like every
+            other menu in the plugin. */}
+        <Menu
+          open={sortOpen}
+          onClose={() => { setSortOpen(false) }}
+          onSelect={(id) => {
+            setSort((current) => {
+              if (id === 'sort-name') return { ...current, key: 'name' }
+              if (id === 'sort-type') return { ...current, key: 'type' }
+              return { ...current, dirsFirst: !current.dirsFirst }
+            })
+            setSortOpen(false)
+          }}
+          items={[
+            { id: 'sort-name', label: t('sortByName'), icon: <IconChevronsUpDownOutlineRegular size={14} /> },
+            { id: 'sort-type', label: t('sortByType'), icon: <IconChevronsUpDownOutlineRegular size={14} /> },
+            { type: 'separator', id: 'sort-sep' },
+            { id: 'sort-folders-first', label: t('sortFoldersFirst') },
+          ]}
+          selectedIds={[
+            sort.key === 'name' ? 'sort-name' : 'sort-type',
+            ...(sort.dirsFirst ? ['sort-folders-first'] : []),
+          ]}
+          align="end"
+          compact
+          anchor={(
+            <IconButton
+              label={t('sort')}
+              icon={<IconChevronsUpDownOutlineRegular size={14} />}
+              onClick={() => { setSortOpen(open => !open) }}
+            />
+          )}
+        />
         <IconButton
           label={t('uploadFiles')}
           icon={<IconUploadOutline16 size={14} />}
@@ -347,6 +393,7 @@ export function TreePanel(props: {
         busy={busy}
         hidden={searching}
         visible={visible !== false}
+        sort={sort}
         service={service}
       />
       {upload !== null && (

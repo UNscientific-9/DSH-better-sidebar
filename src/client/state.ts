@@ -71,6 +71,15 @@ export interface SidebarState {
    * unhighlighted.
    */
   revealed: string[]
+  /**
+   * Tab types whose page the reader has not looked at yet: written when a
+   * background activation opens its page WITHOUT taking the column over
+   * (src/client/sidebar/use-host-feeds.ts) and cleared the moment that page
+   * becomes the one on screen. Deliberately NOT transient — it survives the
+   * tab body's unmount, a session switch and a reload, because an unread page
+   * stays unread until it is read.
+   */
+  unread: TabType[]
   /** Whether the bottom panel (the plugin's one workbench) is open. */
   bottomOpen: boolean
   /** The bottom panel's height (clamped to the contract range). */
@@ -148,6 +157,7 @@ export function makeDefaultState(): SidebarState {
     nextBrowser: 1,
     expanded: [],
     revealed: [],
+    unread: [],
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
     bottomSplits: bottomLeaf,
@@ -341,6 +351,26 @@ export function activateTab(state: SidebarState, paneId: string, tabId: string):
       if (leaf.tabs.some(tab => tab.id === tabId)) leaf.active = tabId
     }),
   }
+}
+
+/**
+ * Mark one tab TYPE as having a page the reader has not looked at yet (the
+ * dot drawn on its tab). Identity-preserving when it is already marked, so a
+ * repeat activation does not churn the store (and therefore localStorage).
+ */
+export function markUnread(state: SidebarState, type: TabType): SidebarState {
+  return state.unread.includes(type) ? state : { ...state, unread: [...state.unread, type] }
+}
+
+/** Clear one tab type's unread mark (the reader just looked at its page). */
+export function clearUnread(state: SidebarState, type: TabType): SidebarState {
+  if (!state.unread.includes(type)) return state
+  return { ...state, unread: state.unread.filter(entry => entry !== type) }
+}
+
+/** Whether one tab type is currently marked unread. */
+export function isUnread(state: SidebarState | undefined, type: TabType): boolean {
+  return state !== undefined && state.unread.includes(type)
 }
 
 /** Update the display fields of one open tab (title / path / meta) without
@@ -679,6 +709,12 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     : 1
   if (typeof record.activePane !== 'string' && record.activePane !== null) return undefined
   if (!Array.isArray(record.expanded) || record.expanded.some(item => typeof item !== 'string')) return undefined
+  // Unread marks arrived in a later build: like the workbench fields below, a
+  // missing or malformed value on an OLDER persisted state defaults to "none
+  // unread" rather than rejecting the whole layout.
+  const unread = Array.isArray(record.unread)
+    ? (record.unread as unknown[]).filter((item): item is string => typeof item === 'string')
+    : []
   // Pane/split ids must be globally unique (the runtime uid counter is
   // shared), so a duplicate id gets a fresh one.
   const seen = new Set<string>()
@@ -715,6 +751,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     nextBrowser,
     expanded: record.expanded as string[],
     revealed: [],
+    // Restored, unlike `revealed`: an unread page is still unread after a
+    // reload, and this list is what draws its dot.
+    unread: unread,
     bottomOpen,
     bottomHeight,
     bottomSplits,
@@ -911,6 +950,66 @@ export class SidebarStore {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /**
+   * Mark one tab type as unread in the CURRENT session (the dot on its tab).
+   *
+   * Reached from the background-activation path alone, so it refuses to
+   * notify when there is nothing to draw: a repeat mark keeps the state
+   * reference AND skips the listener fan-out, which is what lets a test (and
+   * the render path) treat a notification as "the marker really changed".
+   * Returns whether the marker was set.
+   */
+  markUnread(type: TabType): boolean {
+    const state = this.snapshot.state
+    if (state === undefined || state.unread.includes(type)) return false
+    this.replaceCurrent(markUnread(state, type))
+    return true
+  }
+
+  /**
+   * Clear one tab type's unread mark in a NAMED session — the reader switched
+   * to that page. The current session goes through the publishing path (the
+   * dot has to disappear from the shell AND from the native chip, both of
+   * which read the published snapshot); a session that is not on screen takes
+   * the targeted path, which publishes nothing: its stored state is updated so
+   * the mark is already gone when the reader switches to it.
+   *
+   * `reduceFor` is deliberately not used for the current session: it never
+   * touches the published snapshot, so reading the mark back (or rendering
+   * from it) would keep seeing the old value.
+   *
+   * A type that is not marked is a strict no-op in both paths — no notify, no
+   * persist — so a carrier can call this on every visibility change.
+   * Returns whether a mark was cleared.
+   */
+  clearUnread(type: TabType, sessionId?: string): boolean {
+    const state = this.snapshot.state
+    const target = sessionId ?? this.snapshot.sessionId
+    if (target === undefined) return false
+    if (target === this.snapshot.sessionId) {
+      if (state === undefined || !state.unread.includes(type)) return false
+      this.replaceCurrent(clearUnread(state, type))
+      return true
+    }
+    const stored = this.bySession.get(target)
+    if (stored === undefined || !stored.unread.includes(type)) return false
+    this.bySession.set(target, clearUnread(stored, type))
+    return true
+  }
+
+  /**
+   * Commit a state this class already minted (identity-checked by the caller)
+   * as the current session's state, persisting it like any other change.
+   */
+  private replaceCurrent(state: SidebarState): void {
+    const sessionId = this.snapshot.sessionId
+    if (sessionId === undefined) return
+    this.bySession.set(sessionId, state)
+    this.snapshot = { sessionId, state, prefs: this.prefs }
+    this.schedulePersist(sessionId, state)
+    this.notify()
   }
 
   getSnapshot(): SidebarSnapshot {
