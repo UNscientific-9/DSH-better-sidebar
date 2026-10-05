@@ -110,6 +110,8 @@ export const ko: Record<string, string> = {
   closeOtherTabs: '다른 탭 닫기',
   closeLeftTabs: '왼쪽 탭 닫기',
   closeRightTabs: '오른쪽 탭 닫기',
+  closeAllTabs: '모든 탭 닫기',
+  revealTabInFileManager: '파일 위치 열기',
   pinTerminal: '터미널 고정',
   pinAgentTerminal: 'Agent 터미널 고정',
   pinToWorkspace: '워크스페이스에 고정',

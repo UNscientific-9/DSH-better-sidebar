@@ -133,6 +133,8 @@ export const zhHK: Record<string, string> = {
   closeOtherTabs: '關閉其他標籤',
   closeLeftTabs: '關閉左側標籤',
   closeRightTabs: '關閉右側標籤',
+  closeAllTabs: '關閉全部標籤',
+  revealTabInFileManager: '在檔案總管中定位',
   pinTerminal: '固定終端',
   pinAgentTerminal: '固定 Agent 終端',
   pinToWorkspace: '固定到工作區',

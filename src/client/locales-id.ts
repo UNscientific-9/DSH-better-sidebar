@@ -116,6 +116,8 @@ export const id: Record<string, string> = {
   closeOtherTabs: 'Tutup Tab Lain',
   closeLeftTabs: 'Tutup Tab di Kiri',
   closeRightTabs: 'Tutup Tab di Kanan',
+  closeAllTabs: 'Tutup Semua Tab',
+  revealTabInFileManager: 'Tampilkan Berkas di Pengelola Berkas',
   pinTerminal: 'Sematkan Terminal',
   pinAgentTerminal: 'Sematkan Terminal Agent',
   pinToWorkspace: 'Sematkan ke Workspace',

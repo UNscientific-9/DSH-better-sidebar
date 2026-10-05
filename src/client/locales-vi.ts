@@ -118,6 +118,8 @@ export const vi: Record<string, string> = {
   closeOtherTabs: 'Đóng các tab khác',
   closeLeftTabs: 'Đóng tab bên trái',
   closeRightTabs: 'Đóng tab bên phải',
+  closeAllTabs: 'Đóng tất cả tab',
+  revealTabInFileManager: 'Hiển thị tệp trong trình quản lý tệp',
   pinTerminal: 'Ghim Terminal',
   pinAgentTerminal: 'Ghim Terminal Agent',
   pinToWorkspace: 'Ghim vào Workspace',

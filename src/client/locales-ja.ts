@@ -118,6 +118,8 @@ export const ja: Record<string, string> = {
   closeOtherTabs: '他のタブを閉じる',
   closeLeftTabs: '左のタブを閉じる',
   closeRightTabs: '右のタブを閉じる',
+  closeAllTabs: 'すべてのタブを閉じる',
+  revealTabInFileManager: 'ファイルの場所を開く',
   pinTerminal: 'ターミナルを固定',
   pinAgentTerminal: 'Agent ターミナルを固定',
   pinToWorkspace: 'ワークスペースに固定',
