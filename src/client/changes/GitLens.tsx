@@ -418,6 +418,12 @@ export function GitLens(props: GitLensProps) {
     setLogLoadingMore(false)
     setLogFailed(false)
     setActionError(null)
+    // The commit draft belongs to the checkout it was typed against: the
+    // Commit button only asks for a message and a staged row, so a draft left
+    // over from another scope/checkout commits verbatim under the new one —
+    // with no second confirmation. Cleared here rather than at the call sites
+    // so the scope swap and the checkout/repo pickers all get it.
+    setCommitMsg('')
   }
 
   /** Load the branch choices and the first history page of one checkout. */

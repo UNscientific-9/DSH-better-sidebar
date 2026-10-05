@@ -734,4 +734,59 @@ describe('GitLens (changes tab, git lens) scope swap', () => {
       container.remove()
     }
   })
+
+  it('drops a half-typed commit message when the scope changes', async () => {
+    // The Commit button asks only for a non-empty message and a staged row, so
+    // a draft typed against the previous project would commit verbatim under
+    // the new one — no confirmation in between. Asserted through the button's
+    // disabled state, which is driven by the state itself; the input's DOM
+    // value cannot be trusted here, because writing it through the native
+    // setter leaves React's value tracker behind.
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes: 1 }])
+    vi.spyOn(api, 'gitStatus').mockResolvedValue({
+      isRepo: true,
+      branch: 'main',
+      // 'M ' is a STAGED row: the Commit button needs one to be enabled at all.
+      entries: [{ path: 'staged.ts', xy: 'M ' }],
+    })
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+
+    const { container, root } = makeRoot()
+    try {
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+      const input = [...container.querySelectorAll<HTMLInputElement>('input')]
+        .find(el => el.placeholder === t('commitPlaceholder'))
+      if (input === undefined) throw new Error('commit input not found')
+      const commitButton = [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find(el => el.textContent?.trim() === t('commit'))
+      if (commitButton === undefined) throw new Error('commit button not found')
+      // A staged row alone leaves the button disabled: the message is required.
+      expect(commitButton.disabled).toBe(true)
+
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'fix: half typed in A')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(commitButton.disabled).toBe(false)
+
+      // Another session takes over the same mounted instance.
+      mountGit(root, { scope: { sessionId: 's2', cwd: AGENT } })
+      await flushEffects()
+
+      // The draft is gone, so the message half of the gate is unsatisfied again.
+      // Re-queried: a re-render may hand back a different node, and a detached
+      // one keeps whatever its last render set.
+      const afterSwap = [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find(el => el.textContent?.trim() === t('commit'))
+      expect(afterSwap?.disabled).toBe(true)
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
 })
