@@ -3,7 +3,7 @@
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
 > 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；路由前缀安全解析（`hostRouteUrl`）**v0.25.0+**。当前版本 **v0.24.0**（peer 下限 `^0.2.0-rc.1`，仅支持 DSH **0.2.0-rc.1+**；0.1.7 线请用 v0.23.0——caret 范围跨 minor 不成立，`^0.1.7-rc.1` 会被 0.2.0 宿主的启动预检静默禁用）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
-> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 5 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
+> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 6 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
 ---
@@ -31,10 +31,12 @@
 | 链接接管（v0.21.1+） | DOM 层只接管**有类型通过 `urlTarget` 声明认领**的外链（Ctrl/Cmd/Shift/Alt 点击一律放行）；一个都没认领到时**不阻止默认行为**，交回宿主。见 §4.1 的 `urlTarget` |
 | path 种子的去向（v0.19.2+） | `path` seed 的含义**跟随类型**：只有 `editor`（唯一认领 `dsh-resource://file/**` 的类型）把 path 转成资源地址打开（文件落在编辑器）；**其余类型保留页面型打开**，path 随导航 params 落到合成记录的 `tab.path` 供组件消费——组件型 tab 的 path seed 不会被改道到文件编辑器（v0.19.0/0.19.1 上一切 path seed 都被改道，组件从未挂载，#632） |
 | 文件打开的认领判定 | 插件自己的一切文件入口（文件树点击 / 路径输入 / 文件变动页 / 「新标签页打开」，合并与分屏两种模式）都先问宿主原生 tab 注册表：`ctx.sidebarRightTabs.candidates(address)` 的头名若不是本插件的 `editor`，地址改走 `ctx.sidebarRight.openResource`，由**认领类型**渲染自己的 tab——第三方直接在宿主注册表按更具体 glob 注册的原生类型（如 `.drawio` 画板）从此在文件树里点得开（#695）；无人认领、宿主无注册表或探测失败时行为逐字保持原样（落到 `editor` / code 兜底） |
-| 终端（已交还宿主） | 插件**不再提供任何终端**：宿主 0.1.6 起自带 `ui-sidebar-terminal`（kind `terminal`），插件侧 PTY 栈与 `terminal_*` 工具整体删除。这里不再有「插件终端数量上限」这类语义 |
+| 终端（宿主一条 + 插件底部一条，彼此独立） | 插件**不在原生右侧栏提供终端**：宿主 0.1.6 起自带 `ui-sidebar-terminal`（kind `terminal`），插件侧 PTY 栈与 `terminal_*` 工具整体删除。**但插件自己的底部工作台有一条终端**（`terminal-bottom`，#774）：它不注册原生类型、不占 guide 条目（`bottomOnly`），页面是插件自绘的 xterm，进程由**宿主的会话级终端服务** `ctx.webTerminals` 供给——插件不持有 PTY，也不与右列那条共享进程（两条终端各自独立是有意的，右列仍是宿主的地盘）。宿主没挂终端控制器时该类型 `available` 为 false（菜单置灰），页面显示「宿主未提供终端能力」而不是崩 |
+| `bottomOnly`（#774） | 只投底部、永不注册原生承载面的类型（字段说明见 §4）。它同时意味着：`openTab` 落点强制 `'bottom'`（连 `target: 'side'` 也被改道——原生栏里的 tab 不在底部工作台的分栏树里，两者归属矛盾）、原生 tab 类型与 guide 条目都不注册。`hidden: true` **不是**它的替代品：那会连 `+` 菜单一起摘掉（`buildNewTabOptions` 过滤 `!hidden`），而它要的正是「留在 `+` 菜单、只离开原生栏」 |
+| 底部终端的恢复语义（#774） | 刷新后重新上屏同一页签时，页面用**同一份 `(sessionId, key, contentId)`** 再次调用宿主的 `webTerminals.view()`：宿主持久化在 localStorage 的 `(sessionId, contentId) → 终端 id` 绑定因此把**同一个** PTY 认回来（`contentId` 恒为 `dsh-better-sidebar:terminal-bottom`）。插件**不把 terminalId 写进 `tab.meta`**：`view()` 显式传 terminalId 会关掉宿主的「缺了就建」分支，一个过期的 id 会把页签永久卡在 `missingTerminal` 上。DSH 重启后 PTY 全没了而 localStorage 绑定还在，所以「新建终端」按钮把 `tab.meta.terminalRun` +1 换一代 `contentId`，让宿主另铸一个进程，而不是反复认领死绑定 |
 | 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
-| 在侧边打开（`target: 'side'`，v0.22.0+） | 原生栏里的 tab **不在插件底部工作台的分栏树里**，所以「在侧边打开」不能写 `bottomSplits`（那样会落到用户没展开的底部工作台 = 点了没反应）。服务改为把这一步交给宿主：带 path 的 `editor` seed 走 `openResource(address, { preferNewPane: true, revealIfOpened: false })`——宿主先按自己的两格上限与空间规则尝试分栏，分不了才回退到当前格；`revealIfOpened: false` 允许与已打开的同名资源并存，因此对同一个文件再点一次也会新开一格。其余类型若传 `target: 'side'`，同样以 `preferNewPane` 落原生栏（组件型 tab 的 path 仍是组件种子）。path-less 的 `editor`（文件页）与 `'bottom'` 行为不变 |
-| 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 4 个 guide 条目**（文件 / 文件变动 / 任务管理 / 侧边对话，恰好在上限内），**但宿主的终端条目也占一行**——装了宿主终端即是 5 条，说明整列不渲染；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
+| 在侧边打开（`target: 'side'`，v0.22.0+） | 原生栏里的 tab **不在插件底部工作台的分栏树里**，所以「在侧边打开」不能写 `bottomSplits`（那样会落到用户没展开的底部工作台 = 点了没反应）。服务改为把这一步交给宿主：带 path 的 `editor` seed 走 `openResource(address, { preferNewPane: true, revealIfOpened: false })`——宿主先按自己的两格上限与空间规则尝试分栏，分不了才回退到当前格；`revealIfOpened: false` 允许与已打开的同名资源并存，因此对同一个文件再点一次也会新开一格。其余类型若传 `target: 'side'`，同样以 `preferNewPane` 落原生栏（组件型 tab 的 path 仍是组件种子）——**唯一的例外是 `bottomOnly` 类型**（#774）：它没有原生承载面可落，`target: 'side'` 被改道回 `'bottom'`。path-less 的 `editor`（文件页）与 `'bottom'` 行为不变 |
+| 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行，**`bottomOnly: true` 的类型同样不占行**（#774：它只活在插件自己的底部 `+` 菜单里）。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**本插件默认贡献 4 个 guide 条目**（文件 / 文件变动 / 任务管理 / 侧边对话，恰好在上限内），**但宿主的终端条目也占一行**——装了宿主终端即是 5 条，说明整列不渲染；要让说明回来，需在插件设置页关掉足够多的 tab 类型把总数压到 ≤ 4 条 |
 | 新建面板的种子（alpha.2） | 在新会话打开原生新面板时，宿主从已注册的 guide 条目里播种：恰好 1 个条目 → 直接打开那一页；0 或 ≥2 个条目 → 打开指南。`revealIfOpened` 打开的「页面」在**同一 pane 内**强制去重（已在该 pane 就不再新建）；由已有 tab 地址驱动的打开不受该去重影响 |
 | alpha.2 全局面板（不接入） | 插件**不采用** alpha.2 引入的全局主面板模型——根级 keyed `main` 槽（预留 key `conversation`，由 ui-conversation 注册为 `main.conversation`）、根级 `sidebar.panellist` 列表槽（`SidebarPanelMetadata` / `SidebarPanelIconOwnerProps`）、`ctx.layout.selectPanel(MainPanelId|null)` / `beginNavigation()` / `dispose()`、全局标准 prop `usePanelInfo`，以及改根级并新增会话级 `rightbar.session` 子槽的 `rightbar`——这些只作兼容保留，不向其迁移 |
 | 已移除 | 插件自绘右侧面板（含宽度拖拽 / 新会话默认宽度）与**自由窗口**（`features` 里的 `'floatWindows'` 已删除，v0.18.x 及更早版本的消费者请勿再 gate 该能力）；`openByDefault` / `defaultWidthPercent` / `changesDiffFloat` 三个设置项同步删除（旧文档里的键会被忽略）；**插件自带的终端与浏览器 tab 类型**（宿主 0.1.6/0.1.7 自带两者）与**只读文件预览**（image / pdf / Office / 表格，宿主 0.1.7 的 `ui-sidebar-documentpreview` 接手）同样不再内置，详见 §4.4 与 §5.4 |
@@ -48,7 +50,7 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 - **新页面（tab）**：注册一种新的侧边栏 tab 类型，出现在侧边栏 `+` 菜单里，用户点击后在自己的分栏里打开你的 React 页面；
 - **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 markdown/html/code）。**宿主自己也有文档预览**——DSH 0.1.7 的 `ui-sidebar-documentpreview` 拿走了表格 / PDF / 图片 / Office 等只读格式，本插件因此**拒绝**认领那些扩展名，你的 viewer 也接不到它们（清单与原因见 §5.4）。
 
-内置的 5 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / diff）和 3 个 viewer（markdown / html / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
+内置的 6 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / terminal-bottom / diff）和 3 个 viewer（markdown / html / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
 
 关键机制一句话：better-sidebar 的 client half 在 `apply()` 开头执行 `ctx.provide('betterSidebar', service)`（`src/client/index.tsx`），消费插件在 `inject` 里声明 `'betterSidebar'`，Cordis 保证服务就绪后才激活你的插件，然后你调用 `ctx.betterSidebar.registerTab(...)` / `registerFileViewer(...)` 完成注册，返回的 disposer 由 Cordis fiber 在卸载（HMR / 禁用）时自动调用。
 
@@ -199,10 +201,28 @@ interface TabDescriptor {
   description?: string | (() => string)
   /** 图标：ReactNode 或 (size: number) => ReactNode（不声明时宿主补一个方块占位） */
   icon?: ReactNode | ((size: number) => ReactNode)
-  /** + 菜单排序（升序）；默认 100。内置：editor=10, git=20, subagent=30, sidechat=35 */
+  /** + 菜单排序（升序）；默认 100。内置：editor=10, git=20, subagent=30, sidechat=35, terminal-bottom=40 */
   order?: number
   /** 从 + 菜单隐藏（editor/diff 用：由其他流程触发打开，不在菜单里） */
   hidden?: boolean
+  /**
+   * 只投放到插件自己的底部工作台，**永不注册原生右侧栏承载面**（#774）。
+   *
+   * 效果有两处，都必须同时成立才有意义：
+   * - `openTab` 落点强制为 `'bottom'`（即使调用方传了 `target: 'side'`）——
+   *   原生栏里的 tab 不在底部工作台的分栏树里，「在侧边打开」一类请求原本会
+   *   在宿主侧另起一个 tab，与这个页面的归属矛盾；
+   * - 原生承载面既不为它注册 tab 类型，也不为它占 guide 条目——缺了这一半，
+   *   `+` 菜单里那一行会变成原生栏里第二个语义重复的胶囊。
+   *
+   * **它不是 `hidden` 的替代品**：`hidden` 会连 `+` 菜单一起摘掉（`buildNewTabOptions`
+   * 过滤 `!hidden`），而 `bottomOnly` 要的正是「留在 `+` 菜单、只离开原生栏」。
+   * 内置用例是 `terminal-bottom`：DSH 自带的右列终端已经占住 `terminal` 这一格，
+   * 插件自己的底部终端必须**不被看成第二个终端入口**（挂载 lane 钉住宿主
+   * `terminal` guide 条目恰好 1 条）。用它的类型请自备页面组件——原生栏的
+   * 「页面级」承载面（guide 胶囊 / 原生芯片 / `keepMounted`）一概不提供。
+   */
+  bottomOnly?: boolean
   /** + 菜单禁用判定（用量配额一类）。返回 false 只影响菜单 disabled，不拦截 openTab（只有设置页禁用开关会）。 */
   available?: (ctx: Context, scope: SessionScope, state: SidebarState) => boolean
   /**
@@ -437,6 +457,7 @@ ctx.effect(() => {
 | `subagent` | 30 | 是 | 否 | 任务管理（工作流图/树、团队任务板、后台任务抽屉） |
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（changes tab 的预览面板「展开为独立页签」触发，同一渲染栈） |
+| `terminal-bottom` | 40 | 是 | 否 | 底部工作台的终端（#774）。**`bottomOnly`**（见 §4 与「原生承载面」表的说明）：没有原生 tab 类型、不占 guide 条目，只在底部 `+` 菜单里。页面是插件自绘的 xterm（`lib/client-terminal.js` chunk），**进程由宿主的会话级终端服务 `ctx.webTerminals` 供给**（结构化探测，不写进 `dsh.client.inject`——缺服务只会让这一行置灰，不会把整行拖成 `pending`）。恢复靠宿主持久化的 `(sessionId, contentId) → 终端 id` 绑定（`contentId` 恒定），关页签走 `onClose` → `webTerminals.close()` 结束进程（卸载**不**关：宿主的契约是「视图跨 DOM 卸载存活」，刷新要能认回同一个 shell），`tab.meta.terminalRun`（默认 0）是「新建终端」换代号用的代号位。[设计文档](plans/2026-10-05-bottom-terminal-tab.md) |
 
 你的 `id` 不可与上述重复，否则 `registerTab` 抛 `"tab type \"X\" already registered"`。
 
@@ -1185,7 +1206,7 @@ function parseCsv(text: string): string[][] { /* ... */ }
 
 better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），调试时直接读：
 
-- **`src/client/builtins/`**：5 个内置 tab（tabs.tsx）+ 3 个内置 viewer（viewers.tsx）的注册代码 + 聚合与 disposer 生命周期（index.ts）；Office / 表格 / 图片 / PDF 预览**不在插件里**（宿主的 `ui-sidebar-documentpreview` 负责，见 §5.4）
+- **`src/client/builtins/`**：6 个内置 tab（tabs.tsx）+ 3 个内置 viewer（viewers.tsx）的注册代码 + 聚合与 disposer 生命周期（index.ts）；Office / 表格 / 图片 / PDF 预览**不在插件里**（宿主的 `ui-sidebar-documentpreview` 负责，见 §5.4）
 - **`src/client/service.ts`**：`BetterSidebarService` 接口 + `createBetterSidebarService` 工厂实现（含匹配算法、dedupe、createTab、启用态 gating）
 - **`src/client/Sidebar.tsx`**：底部工作台外壳 + `TabContent` 分发（查 `getTab` → 调 descriptor.component；未注册 → `<OrphanedTab/>`）、`+` 菜单构建（order 排序 + available disabled + 禁用过滤）
 - **`src/client/native/`**：原生右侧栏接入（tab 类型注册、合成 `SidebarTab` 适配、资源地址、跨会话打开排队）
@@ -1196,7 +1217,7 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 - **`src/client/FileTree.tsx`** / **`TreePanel.tsx`** / **`src/fs-search.ts`** / **`src/search-engines.ts`**：文件树 / 树面板 / host 文件名搜索（`fs.search`）。搜索优先探测本机 fd / rg（DSH 自带 ripgrep 优先），缺失或运行失败回退 JS 遍历，两条路径共用同一份 `exclude` 探针（引擎侧是输出后置过滤：匹配条目不出现、被排除目录不下钻）；`dirs` 让目录命中行导航文件树而不是当文件打开；调试插桩 `DSH_SEARCH_DEBUG=1` 写 `$DSH_HOME/search-debug.log`，缺省 `~/.dsh`。host 的 `listDirectory` 给目录行标记 `compact`（仅一个非 symlink 有效子项；POSIX 隐藏与 `explorerExclude` 排除条目不计入），client 的 `file-tree-compact.ts` 把单目录链折叠成 `a/b/c` 面包屑行并整链展开/折叠；`explorerExclude`（VS Code `files.exclude` 风格 glob 子集，见 `exclude-patterns.ts`；editor 卡片的声明式 patterns 行可编辑）把匹配条目从树与搜索中彻底移除，两个界面共用同一 host 侧编译好的 matcher；host 侧目录缓存按「路径 + 行额 + 模式集身份」分键，改排除列表即换键。测试：`tests/fs-tree-compact.spec.ts` / `file-tree-compact.spec.ts` / `fs-tree-exclude.spec.ts` / `exclude-patterns.spec.ts` / `fs-search.spec.ts` / `search-engines.spec.ts`
 - **`src/client/markdown-html.ts`** / **`MarkdownHtml.tsx`** / **`md-toc.tsx`**：markdown 内嵌 HTML 管线与目录大纲（注意 `md-toc.tsx` 头注释的「子组件读父 ref 为 null」时序陷阱）
 - **`src/agent-opens.ts`** / **`/sidebar/ws/agent-opens`**：模型主动打开（`sidebar_open` 工具 + `agentOpenTools` 设置，默认关闭）；文件夹窗口 = `meta.dir: true` 的 editor tab（[设计文档](plans/2026-08-23-agent-open-tools-design.md)）
-- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（5 tab + 3 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
+- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（6 tab + 3 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
 - **`src/fs-watch.ts`** / **`src/client/use-dir-watch.ts`**：文件树实时刷新（按展开目录 watch，150ms 去抖、每连接 64 个句柄上限；`tests/fs-watch.spec.ts` 守护）
 - **`docs/plans/`**：逐特性设计文档（含实施偏差记录，以现状为准）；入口如 `2026-08-11-service-registry-design.md` / `2026-08-11-declarative-sidebar-settings-design.md`
 

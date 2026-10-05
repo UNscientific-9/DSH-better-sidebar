@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 5 tabs and 3 file
+ * Built-in registration tests: the plugin registers 6 tabs and 3 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -9,6 +9,10 @@
  * already NOT built in — they moved to the recommended office plugin,
  * see src/client/plugins-viewers.ts.) The git tab is the unified changes
  * tab (git lens + session lens, PR #471's file-trace merged in).
+ *
+ * `terminal-bottom` (#774) is the sixth: the plugin's OWN bottom-workbench
+ * terminal, which is `bottomOnly` and therefore contributes no native tab
+ * type. It is the one built-in whose carrier surface is asserted here.
  */
 import { describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
@@ -31,11 +35,31 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 5 built-in tabs (the host owns terminal and browser)', () => {
+  it('registers the 6 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent'],
+      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
     )
+  })
+
+  it('the terminal tab is bottom-only and never claims a native right-sidebar type', () => {
+    // #774 / AGENTS §2: DSH's own right Sidebar already offers exactly one
+    // `terminal` entry, and the mount lane pins that count. A plugin type that
+    // also reached the native surface would add a second capsule for a page
+    // the host's column cannot draw; `bottomOnly` is the whole mechanism.
+    const { service } = setup()
+    const terminal = service.getTab('terminal-bottom')
+    expect(terminal).toBeDefined()
+    expect(terminal?.bottomOnly).toBe(true)
+    // Visible in the bottom + menu (hidden would remove it from the menu).
+    expect(terminal?.hidden).not.toBe(true)
+    expect(terminal?.icon).toBeDefined()
+    expect(terminal?.component).toBeDefined()
+    // Every other built-in keeps both surfaces.
+    for (const descriptor of service.getTabs()) {
+      if (descriptor.id === 'terminal-bottom') continue
+      expect(descriptor.bottomOnly, descriptor.id).not.toBe(true)
+    }
   })
 
   it('the git (changes) tab is a single-instance badge-carrying visible tab', () => {
