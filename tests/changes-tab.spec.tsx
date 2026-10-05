@@ -11,6 +11,7 @@
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -413,6 +414,94 @@ describe('ChangesTab', () => {
     expect(await paneHeightFor(5000)).toBe(`${String(Math.round(window.innerHeight * 0.7))}px`)
     // ...and an unusably small one is raised to the content minimum.
     expect(await paneHeightFor(50)).toBe('140px')
+  })
+
+  /**
+   * Issue #194: the branch band and the commit box must not scroll away with
+   * the list. The lens root is therefore a FIXED frame whose only scrollable
+   * child is the list body holding the change groups and the history — the two
+   * chrome bands are its siblings, not its contents.
+   */
+  it('keeps the branch band and the commit bar outside the one scroll body (#194)', async () => {
+    mockGit([{ path: 'src/a.ts', xy: ' M' }])
+    vi.spyOn(api, 'gitLog').mockResolvedValue([{
+      hash: 'abcdef0',
+      hashFull: 'abcdef0abcdef0abcdef0abcdef0abcdef0abcd',
+      subject: 'history row',
+      author: 'Test',
+      date: '2026-08-20 00:00:00 +0800',
+      refs: 'HEAD -> main',
+    }])
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mount(root)
+      await flushEffects()
+
+      const frame = container.querySelector<HTMLElement>('[data-git-root]')
+      const scroller = container.querySelector<HTMLElement>('[data-git-scroll]')
+      const head = container.querySelector<HTMLElement>('[data-git-head]')
+      const bar = container.querySelector<HTMLElement>('[data-commit-bar]')
+      expect(frame).not.toBeNull()
+      expect(scroller).not.toBeNull()
+      expect(head).not.toBeNull()
+      expect(bar).not.toBeNull()
+      // The frame is NOT the scroller: the root must never carry the scroll body.
+      expect(frame!.hasAttribute('data-git-scroll')).toBe(false)
+
+      // The branch band and the commit bar are the frame's own children, so
+      // neither can be carried out of the viewport by the list scrolling.
+      expect(head!.parentElement).toBe(frame)
+      expect(bar!.parentElement).toBe(frame)
+      expect(scroller!.contains(head!)).toBe(false)
+      expect(scroller!.contains(bar!)).toBe(false)
+
+      // The list body is what actually holds the change list and the history.
+      expect(scroller!.querySelector('[data-group="unstaged"] [data-path="src/a.ts"]')).not.toBeNull()
+      const historyRow = scroller!.querySelector<HTMLElement>('[role="button"]')
+      expect(historyRow).not.toBeNull()
+      expect(historyRow!.textContent).toContain('history row')
+
+      // The commit box is inside its bar, and the bar sits BELOW the scroller.
+      const input = container.querySelector('textarea')
+      expect(input).not.toBeNull()
+      expect(scroller!.contains(input!)).toBe(false)
+      expect(bar!.contains(input!)).toBe(true)
+      expect(scroller!.compareDocumentPosition(bar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('scrolls the inner body only and no longer pins the commit bar with position: sticky (#194)', () => {
+    // jsdom has no layout engine, so the sheet itself is the evidence for the
+    // docking mechanic (the same pattern the explorer's batch bar uses).
+    const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
+    const rule = (selector: string): string => {
+      const block = sheet.match(new RegExp(`\\n\\${selector} \\{([\\s\\S]*?)\\n\\}`))?.[1]
+      expect(block, `the ${selector} rule must exist in changes.module.css`).toBeDefined()
+      return block!
+    }
+
+    // The lens root is the fixed frame: it owns no scroll axis at all.
+    expect(rule('.git')).not.toContain('overflow')
+    expect(rule('.git')).toContain('display: flex')
+    // The inner body is the ONE vertical scroller (and clips the width).
+    expect(rule('.gitScroll')).toContain('overflow-y: auto')
+    expect(rule('.gitScroll')).toContain('overflow-x: hidden')
+    expect(rule('.gitScroll')).toContain('flex: 1')
+    // The commit bar is now a plain flex sibling — no sticky bottom, no
+    // stacking order over the (still sticky) group headers.
+    expect(rule('.commitBar')).not.toContain('position')
+    expect(rule('.commitBar')).not.toContain('sticky')
+    expect(rule('.commitBar')).not.toContain('z-index')
+    // The group headers still park on the inner body's top edge.
+    const groupHeader = rule('.group .groupHeader')
+    expect(groupHeader).toContain('position: sticky')
+    expect(groupHeader).toContain('top: 0')
   })
 
   it('polls the session events only while the session lens is on screen', async () => {
