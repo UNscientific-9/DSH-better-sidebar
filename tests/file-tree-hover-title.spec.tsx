@@ -74,15 +74,20 @@ function file(path: string, broken = false): Row {
  * `ws/` holds a PLAIN directory (chain of one — the row that used to render no
  * title), a singleton chain `a` → `a/b` (folded into one breadcrumb row), a
  * regular file and a broken symlink (the file row's conditional wording).
+ *
+ * The rows arrive in the order a host really lists them (directories first,
+ * then case-insensitive by name): the tree re-sorts each level for display
+ * (file-tree-sort.ts), so a fixture in any other order describes a listing no
+ * host ever produces.
  */
 function levelOf(path: string): { path: string; entries: Row[]; truncated: boolean } {
   switch (path) {
     case ROOT:
       return { path, entries: [
-        dir('/tmp/ws/plain'),
         dir('/tmp/ws/a', true),
-        file('/tmp/ws/readme.md'),
+        dir('/tmp/ws/plain'),
         file('/tmp/ws/dangling', true),
+        file('/tmp/ws/readme.md'),
       ], truncated: false }
     case '/tmp/ws/a':
       return { path, entries: [dir('/tmp/ws/a/b', true)], truncated: false }
@@ -224,10 +229,10 @@ describe('FileTree row hover titles', () => {
       .map(row => `${labelOf(row)} → ${row.getAttribute('title') ?? '<none>'}`)
     expect(titled).toEqual([
       'ws → /tmp/ws',
-      'plain → /tmp/ws/plain',
       'a/b → /tmp/ws/a/b',
-      'readme.md → /tmp/ws/readme.md',
+      'plain → /tmp/ws/plain',
       'dangling → /tmp/ws/dangling — Broken symlink',
+      'readme.md → /tmp/ws/readme.md',
     ])
   })
 })

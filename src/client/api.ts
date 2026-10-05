@@ -391,6 +391,11 @@ export const api = {
    *  is armed — anything resolving outside the workspace). */
   fsMkdir: (scope: SessionScope, path: string, name: string) =>
     call<{ path: string }>('fs.mkdir', scopePayload(scope, { path, name })),
+  /** Create one EMPTY file row inside `path` (single-segment name; the server
+   *  refuses existing destinations — without truncating them — plus the
+   *  characters and Windows device names a file name may not use). */
+  fsCreateFile: (scope: SessionScope, path: string, name: string) =>
+    call<{ path: string }>('fs.createFile', scopePayload(scope, { path, name })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
