@@ -31,7 +31,7 @@ import {
 } from './config.ts'
 import { invalidateDirectoryCache, listDirectory, messageOf, parentOf, requireAbsolute, rootLabel, type SidebarFsEntry } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
-import { mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
+import { createWorkspaceFile, mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { compileExcludePatterns } from './exclude-patterns.ts'
@@ -652,6 +652,18 @@ function buildApi(
     'fs.mkdir': async (payload) => {
       const { cwd } = await cwdOf(payload)
       return mkdirWorkspaceEntry({
+        cwd,
+        path: requireString(payload, 'path'),
+        name: requireString(payload, 'name'),
+      })
+    },
+    // The tree's "new file": one EMPTY file inside an existing row. Same
+    // single-segment/existence rules as mkdir, plus the Windows-illegal and
+    // reserved-device-name refusals a file name has to survive (fs-operations.ts
+    // owns both), and a destination that is never truncated.
+    'fs.createFile': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      return createWorkspaceFile({
         cwd,
         path: requireString(payload, 'path'),
         name: requireString(payload, 'name'),

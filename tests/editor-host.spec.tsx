@@ -15,6 +15,7 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
+import { api } from '../src/client/api.ts'
 import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
@@ -37,7 +38,9 @@ vi.mock('../src/client/api.ts', () => ({
     gitStatus: async () => ({ isRepo: false, entries: [] }),
     archiveBuild: async () => ({ id: 'ar-1', entries: 1 }),
     archiveStatus: async () => ({ state: 'ready', done: 1, total: 1, bytes: 1 }),
-    openExternal: async () => ({ started: true }),
+    // A `vi.fn` so the external-open cases can drive a refusal: the host route
+    // reports a real failure since #412 instead of a silent `{ started: true }`.
+    openExternal: vi.fn(async () => ({ started: true })),
   },
   archiveDownloadUrl: () => '/sidebar/archive?id=ar-1',
   downloadUrl: () => '/sidebar/file',
@@ -481,12 +484,19 @@ describe('EditorHost (files window)', () => {
 })
 
 /**
- * "Open to the Side" from a NATIVE tab must reach the host's own split, not
- * the plugin's bottom workbench: a native right-Sidebar tab is absent from
- * `bottomSplits`, so the old code fell through to `firstLeaf` — a pane the
- * user had not expanded, i.e. "the menu item does nothing".
+ * Context-menu actions of a NATIVE tab's tree panel.
+ *
+ * "Open to the Side" must reach the host's own split, not the plugin's bottom
+ * workbench: a native right-Sidebar tab is absent from `bottomSplits`, so the
+ * old code fell through to `firstLeaf` — a pane the user had not expanded,
+ * i.e. "the menu item does nothing".
+ *
+ * "Open with" rows hand the launch to the host route; since #412 that route
+ * reports a real failure instead of a silent `{ started: true }`, so a refused
+ * launch must reach the tree's error strip (console-only feedback was the
+ * reported "no reaction").
  */
-describe('EditorHost "open to the side"', () => {
+describe('EditorHost native-tab context-menu actions', () => {
   /** A service whose openTab calls are recorded (surface undefined = native). */
   function spyService(store: ReturnType<typeof createSidebarStore>): {
     service: ReturnType<typeof createBetterSidebarService>
@@ -637,6 +647,46 @@ describe('EditorHost "open to the side"', () => {
       expect(opens.every(open => open.target === undefined)).toBe(true)
       expect(tabCount(store)).toBe(before + 1)
     } finally {
+      unmount()
+    }
+  })
+
+  it('reports a refused external open in the tree strip, not only in the console (#412)', async () => {
+    const store = createSidebarStore()
+    const { service } = spyService(store)
+    service.registerTab({ id: 'editor', title: 'Editor', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('editor-home-session')
+    const ctx = fakeCtx(service)
+    // The failure the host route now reports when EVERY opener branch dies.
+    vi.mocked(api.openExternal).mockRejectedValueOnce(new Error('spawn cmd.exe ENOENT'))
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { container, unmount } = await mountNative(ctx, store, service)
+    try {
+      const row = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
+        .find(el => el.querySelector('[class*="explorerName"]')?.textContent === 'a.ts')
+      expect(row).toBeDefined()
+      act(() => {
+        row!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }))
+      })
+      const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find(el => el.getAttribute('aria-haspopup') === 'menu')
+      expect(parent).toBeDefined()
+      act(() => { parent!.click() })
+      const vscodeRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+        .find(el => el.textContent?.trim() === 'VS Code')
+      expect(vscodeRow).toBeDefined()
+      await act(async () => {
+        vscodeRow!.click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      // The launch really happened through the host route…
+      expect(api.openExternal).toHaveBeenCalledWith({ action: 'url', url: 'vscode://file//tmp/a.ts' })
+      // …its failure is logged for diagnosis AND rendered where the user looks.
+      expect(logged).toHaveBeenCalled()
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('Could not open: /tmp/a.ts')
+    } finally {
+      logged.mockRestore()
       unmount()
     }
   })

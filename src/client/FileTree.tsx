@@ -12,7 +12,8 @@
  *
  * Selection (VS Code semantics, no modifier = the old click semantics
  * untouched): Ctrl/Cmd+click toggles a row and sets the anchor, Shift+click
- * selects the visible range from the anchor, Escape / a blank click clears,
+ * selects the visible range from the anchor (in the tree's own row order —
+ * `sort` included), Escape / a blank click clears,
  * right-clicking outside the selection collapses it onto the row. A non-empty
  * selection shows the batch bar above the root row (copy paths / delete /
  * clear); the batch delete confirms once and removes sequentially.
@@ -27,8 +28,9 @@
  * context menu: file rows offer the caller's open escapes (new tab / to the
  * side, only when the callbacks exist), the host's "open in app" section and
  * a download action (the host serves raw bytes, binary-safe); directory rows
- * offer "upload here" and "new folder" (an inline editor at the top of that
- * level); every row can copy the relative or absolute path (with a brief
+ * offer "upload here", "new folder" and "new file" (an inline editor at the
+ * top of that level; the two creators are mutually exclusive); every row can
+ * copy the relative or absolute path (with a brief
  * "copied" label replacing the button after a successful write).
  *
  * Rows are memoized components (FileRow / DirRow) fed by stable callbacks and
@@ -53,6 +55,7 @@ import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry, type FsLevel } from './api.ts'
 import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
+import { DEFAULT_FILE_TREE_SORT, sortEntries, type FileTreeSort } from './file-tree-sort.ts'
 import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
@@ -90,6 +93,25 @@ export function baseName(path: string): string {
 function parentOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return at <= 0 ? path : path.slice(0, at)
+}
+
+/** A direct child path of one tree level (row paths may use either separator;
+ *  node:fs accepts the mixed form on Windows, where this runs). */
+export function joinChild(dir: string, name: string): string {
+  return `${dir.replace(/[\\/]+$/, '')}/${name}`
+}
+
+/** Client-side collision guard for the inline new-file editor: the typed name
+ *  must not already be taken in the level being edited. The SERVER refuses a
+ *  taken destination too — this is the same rule answered from the rows the
+ *  user is looking at, so the refusal arrives before a round trip (and on a
+ *  level whose listing is stale the server still has the last word).
+ *  Case-insensitive: the primary platforms (Windows/macOS) resolve names
+ *  that way, and on case-sensitive ones a refusal is merely conservative. */
+export function nameTaken(entries: readonly { name: string }[] | undefined, name: string): boolean {
+  if (entries === undefined) return false
+  const want = name.toLowerCase()
+  return entries.some((entry) => entry.name.toLowerCase() === want)
 }
 
 /** Only OS file drags belong to the upload surface; in-app drags (tab reorder,
@@ -459,8 +481,10 @@ export function FileTree(props: {
   openWithPinned?: string[]
   /** Whether the workspace is remote (appends the SSH hint to target labels). */
   openWithSsh?: boolean
-  /** Open one plugin target externally (reveal or URL — the caller decides). */
-  onOpenWith?: (targetId: string, path: string) => void
+  /** Open one plugin target externally (reveal or URL — the caller decides).
+   *  It answers `false` (or rejects) when the hand-off did not happen, and the
+   *  strip then reports it exactly like the host-backed rows. */
+  onOpenWith?: (targetId: string, path: string) => void | boolean | Promise<void | boolean>
   /** Toggle one plugin target's pinned state (the submenu row's pushpin). */
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft (file vs directory). */
@@ -501,6 +525,12 @@ export function FileTree(props: {
    */
   openWithShowPluginTargets?: boolean
   /**
+   * The explorer's row order (the header control's choice). Absent → the
+   * server's own order, which {@link DEFAULT_FILE_TREE_SORT} reproduces, so an
+   * older caller renders exactly what it rendered before the control existed.
+   */
+  sort?: FileTreeSort
+  /**
    * The sidebar registry service: when present, externally registered file
    * icons (`registerFileIcon`) outrank the host's file-type artwork on file rows.
    * Absent → the built-ins alone (the host always passes it today).
@@ -516,6 +546,7 @@ export function FileTree(props: {
     openWithShowPluginTargets, exclude,
     onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, hidden, visible, service,
   } = props
+  const sort = props.sort ?? DEFAULT_FILE_TREE_SORT
   /** The live props for the stable callbacks below (identity churns per render). */
   const propsRef = useRef(props)
   propsRef.current = props
@@ -551,6 +582,8 @@ export function FileTree(props: {
   const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null)
   /** The inline new-folder editor: the directory it inserts into plus the buffer. */
   const [newFolder, setNewFolder] = useState<{ dir: string; value: string } | null>(null)
+  /** The inline new-file editor: the directory it inserts into plus the buffer. */
+  const [newFile, setNewFile] = useState<{ dir: string; value: string } | null>(null)
   /** The delete awaiting the confirmation modal's yes (single row). */
   const [confirmDelete, setConfirmDelete] = useState<{ path: string; isDir: boolean; name: string } | null>(null)
   /** The batch delete awaiting the confirmation modal's yes. */
@@ -1069,6 +1102,7 @@ export function FileTree(props: {
   const startNewFolder = (dir: string): void => {
     const live = propsRef.current
     if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    setNewFile(null)
     setNewFolder({ dir, value: '' })
   }
 
@@ -1102,6 +1136,57 @@ export function FileTree(props: {
   const cancelNewFolder = (): void => {
     newFolderRef.current = null
     setNewFolder(null)
+  }
+
+  // ── New file ───────────────────────────────────────────────────────────
+  const newFileRef = useRef(newFile)
+  newFileRef.current = newFile
+
+  /** Open the inline editor at the TOP of `dir`'s level (expanding it first). */
+  const startNewFile = (dir: string): void => {
+    const live = propsRef.current
+    if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    setNewFolder(null)
+    setNewFile({ dir, value: '' })
+  }
+
+  /**
+   * Commit the inline new-file name: Enter, blur, or the editor's own cancel
+   * path. The ref guard makes the commit idempotent — a blur that lands after
+   * Enter must not fire a second create. Creates an EMPTY file through
+   * `fs.createFile` (the server refuses a taken destination without truncating
+   * it); a name the level already lists is refused here first, so the two
+   * obvious mistakes never cost a round trip.
+   */
+  const commitNewFile = (dir: string, raw: string): void => {
+    if (newFileRef.current === null) return
+    newFileRef.current = null
+    setNewFile(null)
+    const name = raw.trim()
+    const live = propsRef.current
+    if (live.cwd === undefined) return
+    if (!validName(name)) {
+      setActionError(t('newFileInvalid'))
+      return
+    }
+    if (nameTaken(dataRef.current[dir]?.entries, name)) {
+      setActionError(t('newFileExists'))
+      return
+    }
+    api.fsCreateFile({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
+      .then(() => {
+        setActionError(null)
+        if (dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+        retryDir(dir)
+      })
+      .catch((error: unknown) => {
+        setActionError(error instanceof Error ? error.message : String(error))
+      })
+  }
+
+  const cancelNewFile = (): void => {
+    newFileRef.current = null
+    setNewFile(null)
   }
 
   // ── Batch delete ───────────────────────────────────────────────────────
@@ -1575,14 +1660,16 @@ export function FileTree(props: {
     }
   }, [data])
 
-  // The Shift range walks the rows the user can actually see: depth-first,
-  // expanded state decides. Recomputed with the level cache, never rendered.
+  // The Shift range walks the rows the user can actually see: the level's
+  // rows in the SAME order `renderLevel` draws them (the sort choice), then
+  // depth-first, expanded state decides. Recomputed with the level cache,
+  // never rendered.
   const visibleRows = useMemo(() => {
     const rows: { path: string; isDir: boolean }[] = []
     const walk = (dir: string): void => {
       const level = data[dir]
       if (level?.entries === undefined) return
-      for (const entry of level.entries) {
+      for (const entry of sortEntries(level.entries, sort)) {
         // A folded row IS one row: its identity is the chain head (the level
         // entry the walk is on), and it descends into the chain TAIL — the
         // same shape `renderLevel` draws, so a Shift range covers what the
@@ -1595,7 +1682,7 @@ export function FileTree(props: {
     }
     if (root !== undefined) walk(root)
     return rows
-  }, [chainFor, data, expandedSet, root])
+  }, [chainFor, data, expandedSet, root, sort])
   visibleRowsRef.current = visibleRows
 
   /**
@@ -1685,9 +1772,52 @@ export function FileTree(props: {
     </div>
   )
 
+  /**
+   * The inline new-file editor at the top of one level: the same interaction
+   * contract as the new-folder editor (Enter commits, Escape cancels, blur
+   * commits, conservatively IME-guarded). The glyph follows the typed name, so
+   * the extension's icon updates while typing (an empty buffer probes with a
+   * neutral carrier name).
+   */
+  const renderNewFileRow = (dir: string, depth: number): ReactNode => {
+    const typed = newFile?.value.trim() ?? ''
+    const probe = joinChild(dir, typed === '' ? 'untitled' : typed)
+    return (
+      <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
+        {service !== undefined ? service.fileIcon(probe, 14) : builtinFileIcon(probe, 14)}
+        <input
+          ref={renameInputRef}
+          className={css.explorerRenameInput}
+          value={newFile?.value ?? ''}
+          placeholder={t('newFilePlaceholder')}
+          aria-label={t('newFile')}
+          spellCheck={false}
+          onChange={(event) => {
+            setNewFile(prev => prev === null ? prev : { ...prev, value: event.target.value })
+          }}
+          onKeyDown={(event) => {
+            if (isLikelyImeKey(event)) return
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commitNewFile(dir, newFile?.value ?? '')
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              cancelNewFile()
+            }
+          }}
+          onBlur={() => { commitNewFile(dir, newFile?.value ?? '') }}
+        />
+      </div>
+    )
+  }
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
-    const head = newFolder?.dir === dir ? renderNewFolderRow(dir, depth) : null
+    // Only ONE inline creator is open at a time (each start closes the other),
+    // so the two are tested in a fixed order rather than merged.
+    const head = newFolder?.dir === dir
+      ? renderNewFolderRow(dir, depth)
+      : newFile?.dir === dir ? renderNewFileRow(dir, depth) : null
     // Both the not-yet-requested level (`undefined`) and the in-flight marker
     // `loadLevels` stores (`{}` — no entries, no error yet) draw the loading
     // row. Without the second half the marker fell into `entries ?? []` and
@@ -1716,7 +1846,9 @@ export function FileTree(props: {
         </>
       )
     }
-    const entries = level.entries ?? []
+    // The ORDER is the caller's choice (the header's sort control); the level
+    // cache keeps the host's own order and is never reordered in place.
+    const entries = sortEntries(level.entries ?? [], sort)
     return (
       <>
         {head}
@@ -1952,6 +2084,9 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === true
             ? [{ id: 'new-folder', label: t('newFolder'), icon: <IconPlusOutlineRegular size={14} /> }]
             : []),
+          ...(rowMenu?.isDir === true
+            ? [{ id: 'new-file', label: t('newFile'), icon: <IconCodeOutlineRegular size={14} /> }]
+            : []),
           // 5: ZIP of the current selection (≥2 rows, or one lone directory).
           ...(rowMenu === null ? [] : zipEntries(rowMenu)),
           // 6: copy, then the mutations (never on the workspace root row).
@@ -1988,7 +2123,15 @@ export function FileTree(props: {
           // The plugin's own targets share one id space (pinned rows and
           // submenu children alike), so the caller gets the target id + path.
           if (id.startsWith('open-with:')) {
-            onOpenWith?.(id.slice('open-with:'.length), target.path)
+            // The caller owns the launch and answers whether it was accepted;
+            // a refusal (or a rejection) means nothing opened, so the failure
+            // lands in the same strip as the host-backed rows instead of only
+            // reaching the console (#412 was silence in this exact spot).
+            const pending = onOpenWith?.(id.slice('open-with:'.length), target.path)
+            void Promise.resolve(pending).then(
+              (accepted) => { if (accepted === false) reportOpenFailure(target.path) },
+              () => { reportOpenFailure(target.path) },
+            )
             return
           }
           if (id === 'reveal-in-file-manager') {
@@ -2011,7 +2154,12 @@ export function FileTree(props: {
           if (id === 'new-folder') {
             startNewFolder(target.path)
             return
-          }          if (id === 'rename') {
+          }
+          if (id === 'new-file') {
+            startNewFile(target.path)
+            return
+          }
+          if (id === 'rename') {
             setRenaming({ path: target.path, value: baseName(target.path) })
             return
           }
