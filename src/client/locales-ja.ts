@@ -110,6 +110,7 @@ export const ja: Record<string, string> = {
   gitStatusConflict: '競合',
   changesClean: 'ワークスペースに変更はありません',
   changesNoHistory: 'コミット履歴がまだありません',
+  changesNewFile: '新規ファイル',
   changesStageFailed: 'ステージに失敗しました：{message}',
   changesOpGone: 'この操作はセッションログに残っていません',
   newTab: '新しいタブ',

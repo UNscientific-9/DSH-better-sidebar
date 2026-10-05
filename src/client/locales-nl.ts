@@ -108,6 +108,7 @@ export const nl: Record<string, string> = {
   gitStatusConflict: 'Conflict',
   changesClean: 'Geen wijzigingen in de workspace',
   changesNoHistory: 'Nog geen commitgeschiedenis',
+  changesNewFile: 'Nieuw bestand',
   changesStageFailed: 'Stagen mislukt: {message}',
   changesOpGone: 'Deze bewerking staat niet meer in het sessielogboek',
   newTab: 'Nieuw tabblad',

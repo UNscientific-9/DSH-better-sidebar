@@ -103,6 +103,7 @@ export const fr: Record<string, string> = {
   gitStatusConflict: 'En conflit',
   changesClean: 'Aucune modification dans le workspace',
   changesNoHistory: 'Aucun commit pour l’instant',
+  changesNewFile: 'Nouveau fichier',
   changesStageFailed: 'Échec de l’indexation : {message}',
   changesOpGone: 'Cette opération n’est plus dans le journal de la session',
   newTab: 'Nouvel onglet',

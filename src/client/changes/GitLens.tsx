@@ -32,7 +32,7 @@ import {
   IconSparkleRegular, IconTrashOutlineRegular, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
+import type { GitLineCounts, GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
 import { api, SidebarApiError } from '../api.ts'
 import { builtinFileIcon, builtinFolderIcon } from '../file-icons.tsx'
 import { usePolling } from '../use-polling.ts'
@@ -44,7 +44,8 @@ import {
   ConfirmDialog, IconButton, Notice, SectionHeader, StatusBadge, invalidateGitStatus, statusOfXY,
   useGitStatus, type GitFileStatus, type GitTone, type StatusTone,
 } from '../ui/index.ts'
-import { buildChangeTree, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
+import { buildChangeTree, sumLineCounts, type ChangeDir, type ChangeFile, type ChangeNode } from './change-tree.ts'
+import diffCss from '../diff/diff.module.css'
 import css from './changes.module.css'
 
 /** Whether the entry carries STAGED (index) changes — the X letter is set. */
@@ -135,14 +136,52 @@ const NO_ENTRIES: readonly GitStatusEntry[] = []
  * A CONTENT key for one status answer. The shared store mints a brand-new
  * entries array for every poll — idle polls with byte-identical content
  * included — so array identity cannot decide whether the tree must be rebuilt.
- * This string can: the same paths and porcelain codes always produce the same
- * key, and a key change is exactly when the tree, its counts and the row
- * objects need to be recomputed.
+ * This string can: the same paths, porcelain codes and line counts always
+ * produce the same key, and a key change is exactly when the tree, its totals
+ * and the row objects need to be recomputed. The counts belong in the key
+ * because an edit that only moves lines leaves `xy` alone (#131): without them
+ * the memoized rows would keep printing their first reading.
  */
 function entriesKey(entries: readonly GitStatusEntry[]): string {
   let key = ''
-  for (const entry of entries) key += `${entry.xy}\u0000${entry.path}\n`
+  for (const entry of entries) {
+    const counts = entry.counts
+    const lines = counts === undefined
+      ? ''
+      : 'additions' in counts ? `${counts.additions}/${counts.deletions}` : 'binary'
+    key += `${entry.xy}\u0000${entry.path}\u0000${lines}\n`
+  }
   return key
+}
+
+/** The `+N` / `−M` pair, ink and sign included: shared by a file row and its
+ *  group header so the two can never drift apart. A zero side is omitted (the
+ *  diff pane's own convention), and both numbers stay on the element as
+ *  `data-` attributes for the row's tests. */
+function PlusMinus(props: { additions: number; deletions: number; note?: string }): ReactNode {
+  return (
+    <span className={css.lineCounts} data-lines={props.note ?? 'count'}
+      data-added={props.additions} data-deleted={props.deletions}>
+      {props.additions > 0 && <span className={diffCss.statAdd}>+{props.additions}</span>}
+      {props.deletions > 0 && <span className={diffCss.statDel}>−{props.deletions}</span>}
+    </span>
+  )
+}
+
+/** One row's line counts (#131): the numbers for a text change, the binary
+ *  mark when git has none for a blob, and "new file" for an untracked entry —
+ *  git never diffs those, so there is no numstat row and `+0 −0` would be an
+ *  invented number. An entry with no counts that is NOT untracked (a status
+ *  answer whose numstat read failed) shows nothing at all. */
+function LineCounts(props: { counts?: GitLineCounts; untracked: boolean }): ReactNode {
+  const { counts } = props
+  if (counts === undefined) {
+    return props.untracked
+      ? <span className={css.lineNote} data-lines="new">{t('changesNewFile')}</span>
+      : null
+  }
+  if (!('additions' in counts)) return <span className={css.lineNote} data-lines="binary">{t('diffBinary')}</span>
+  return <PlusMinus additions={counts.additions} deletions={counts.deletions} />
 }
 
 /** The preview ref for one changed file (one ref per path+side). */
@@ -189,6 +228,9 @@ const FileRow = memo(function FileRow(props: {
         <span className={css.rowIcon} aria-hidden="true">{props.glyph(node.path)}</span>
         <StatusBadge tone={BADGE_TONE[node.status.tone]} title={node.path}>{node.status.letter}</StatusBadge>
         <span className={css.rowName}>{node.name}</span>
+        {/* The row's own line counts (#131): read straight off the node, so a
+            poll that answered different numbers re-renders this row with them. */}
+        <LineCounts counts={node.counts} untracked={node.status.tone === 'untracked'} />
       </button>
       <IconButton
         size="sm"
@@ -771,6 +813,10 @@ export function GitLens(props: GitLensProps) {
     // memoized rows below keep their props and never re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentKey])
+  // The band totals (#131) sum the very nodes the rows render, so the header
+  // can never disagree with the numbers printed under it.
+  const unstagedTotal = useMemo(() => sumLineCounts(unstagedTree), [unstagedTree])
+  const stagedTotal = useMemo(() => sumLineCounts(stagedTree), [stagedTree])
   const isRepo = snapshot?.isRepo === true
   const branch = snapshot?.branch ?? ''
   const branchOptions = branch === '' ? branchNames : [branch, ...branchNames.filter(name => name !== branch)]
@@ -945,6 +991,10 @@ export function GitLens(props: GitLensProps) {
                   : undefined}
               >
                 <span className={css.countPill} data-count={unstagedEntries.length}>{unstagedEntries.length}</span>
+                {/* The group's line total (#131): the sum of its file rows. */}
+                {unstagedTotal.files > 0 && (
+                  <PlusMinus additions={unstagedTotal.additions} deletions={unstagedTotal.deletions} note="group" />
+                )}
               </SectionHeader>
               {renderTree(unstagedTree, false)}
             </div>
@@ -966,6 +1016,9 @@ export function GitLens(props: GitLensProps) {
                   : undefined}
               >
                 <span className={css.countPill} data-count={stagedEntries.length}>{stagedEntries.length}</span>
+                {stagedTotal.files > 0 && (
+                  <PlusMinus additions={stagedTotal.additions} deletions={stagedTotal.deletions} note="group" />
+                )}
               </SectionHeader>
               {renderTree(stagedTree, true)}
             </div>

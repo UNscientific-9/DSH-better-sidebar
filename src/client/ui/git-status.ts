@@ -21,7 +21,7 @@
  * returned early, so a click during the poll silently did nothing).
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { api, type GitStatusResult, type SessionScope } from '../api.ts'
+import { api, type GitLineCounts, type GitStatusResult, type SessionScope } from '../api.ts'
 
 /** The semantic class of one changed path (drives the row's ink). */
 export type GitTone =
@@ -91,6 +91,22 @@ function joinRoot(root: string, rel: string): string {
 }
 
 /**
+ * Whether two entries carry the same line counts. A numstat-only change — an
+ * edit that adds lines without touching either porcelain letter, e.g. more
+ * lines appended to an already-modified file — must still publish a NEW
+ * snapshot: keeping the previous identity would freeze the row's numbers at
+ * their first reading for as long as the porcelain codes stay put.
+ */
+function sameCounts(left: GitLineCounts | undefined, right: GitLineCounts | undefined): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined) return false
+  if ('additions' in left && 'additions' in right) {
+    return left.additions === right.additions && left.deletions === right.deletions
+  }
+  return 'binary' in left && 'binary' in right
+}
+
+/**
  * Whether two status snapshots carry the same information. Compared field by
  * field (never by serializing the whole object): the entries are the payload
  * and their order is stable, so a length + pairwise compare is enough.
@@ -104,7 +120,7 @@ function sameStatus(a: GitStatusResult, b: GitStatusResult): boolean {
     && a.repositories.some((root, index) => root !== b.repositories![index])) return false
   return a.entries.every((entry, index) => {
     const other = b.entries[index]!
-    return entry.path === other.path && entry.xy === other.xy
+    return entry.path === other.path && entry.xy === other.xy && sameCounts(entry.counts, other.counts)
   })
 }
 

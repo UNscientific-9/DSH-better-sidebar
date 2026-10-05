@@ -112,6 +112,7 @@ export const pl: Record<string, string> = {
   gitStatusConflict: 'Konflikt',
   changesClean: 'Brak zmian w obszarze roboczym',
   changesNoHistory: 'Brak historii commitów',
+  changesNewFile: 'Nowy plik',
   changesStageFailed: 'Nie udało się wykonać stage: {message}',
   changesOpGone: 'Tej operacji nie ma już w dzienniku sesji',
   newTab: 'Nowa karta',

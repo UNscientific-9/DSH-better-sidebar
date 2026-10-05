@@ -93,6 +93,7 @@ export const pt: Record<string, string> = {
   gitStatusConflict: 'Em conflito',
   changesClean: 'Nenhuma alteração no workspace',
   changesNoHistory: 'Ainda não há histórico de commits',
+  changesNewFile: 'Novo arquivo',
   changesStageFailed: 'Falha ao preparar: {message}',
   changesOpGone: 'Esta operação não está mais no registro da sessão',
   newTab: 'Nova aba',

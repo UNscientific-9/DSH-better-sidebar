@@ -102,6 +102,7 @@ export const ko: Record<string, string> = {
   gitStatusConflict: '충돌',
   changesClean: '워크스페이스에 변경 사항이 없습니다',
   changesNoHistory: '아직 커밋 기록이 없습니다',
+  changesNewFile: '새 파일',
   changesStageFailed: '스테이징 실패: {message}',
   changesOpGone: '이 작업은 더 이상 세션 로그에 없습니다',
   newTab: '새 탭',
