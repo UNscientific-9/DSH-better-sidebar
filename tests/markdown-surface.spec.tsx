@@ -496,6 +496,83 @@ describe('the markdown preview surface', () => {
     again.unmount()
   })
 
+  it('renders a CRLF document exactly like its LF twin, ids included', () => {
+    // Line endings are not content. The scanner half of this invariant is
+    // pinned in tests/markdown-crlf.spec.ts; this is the half a reader sees,
+    // through the real renderer — and it is asserted SYNCHRONOUSLY after the
+    // mount, because that is when the surface pass runs: every id it writes
+    // onto the headings is thrown away if the preview re-renders the document
+    // under the other spelling one commit later. That is what a CRLF file used
+    // to do — CodeMirror holds every document with LF endings, so the draft it
+    // snapshots differs from the loaded bytes by line endings alone, and the
+    // host renderer rebuilds the markdown elements it owns on that change.
+    const lf = [
+      '# 标题',
+      '',
+      '<div align="center">',
+      '  <img alt="badge" src="https://img.shields.io/badge/x-y-blue" />',
+      '</div>',
+      '',
+      '## 🚀 安装',
+      '',
+      'See [other](./other.md#安装).',
+      '',
+    ].join('\n')
+    /** Everything the surface pass and the delegate are responsible for. */
+    const shapeOf = (text: string): Record<string, unknown> => {
+      const mounted = mountEditor(text, '/p/README.md')
+      const surface = surfaceOf(mounted.container)
+      const shape = {
+        ids: [...surface.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')].map(heading => heading.id),
+        htmlSegments: surface.querySelectorAll('[data-dsh-html-segment]').length,
+        // Whitespace-normalized: a raw-HTML run's own last line keeps its `\r`
+        // in the CRLF spelling, and the sanitizer turns that terminator into a
+        // whitespace text node inside the rendered leaf. Invisible (browsers
+        // collapse it), so the reader-visible text is what is compared.
+        text: (surface.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        claimedLinks: [...surface.querySelectorAll<HTMLButtonElement>('button')]
+          .map(button => button.title)
+          .filter(title => title.startsWith('./')),
+      }
+      mounted.unmount()
+      return shape
+    }
+    const crlf = shapeOf(lf.replace(/\n/g, '\r\n'))
+    // Guard the guard: the fixture really does exercise both halves — a
+    // heading that slugs to its own text, one whose id carries the space the
+    // emoji left behind, and a claimed `.md` link carrying a heading fragment.
+    expect(crlf.ids).toEqual(['标题', '-安装'])
+    expect(crlf.claimedLinks).toEqual(['./other.md#安装'])
+    expect(shapeOf(lf)).toEqual(crlf)
+  })
+
+  it('resolves every README anchor from a CRLF copy, on every lane', () => {
+    // The acceptance case below reads whatever line endings the checkout has,
+    // so on the ubuntu/macOS lanes it never sees the spelling the `ci-windows`
+    // lane checks out. This copy pins that spelling on EVERY lane, and it
+    // asserts synchronously for the reason given in the case above.
+    const crlf = readFileSync(join(process.cwd(), 'README.md'), 'utf8')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n/g, '\r\n')
+    const mounted = mountEditor(crlf, '/p/README.md')
+    const surface = surfaceOf(mounted.container)
+    const headings = [...surface.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+    const tocAnchors = crlf.split(/\r?\n/).slice(34, 44)
+      .flatMap(line => [...line.matchAll(/\]\((#[^)\s]*)\)/g)])
+      .map(match => match[1] ?? '')
+      .filter(anchor => anchor !== '')
+    expect(tocAnchors.length).toBeGreaterThanOrEqual(15)
+
+    const unresolved = tocAnchors.filter((anchor) => {
+      const fragment = decodeURIComponent(anchor.slice(1))
+      const heading = headings.find(candidate => candidate.id === fragment)
+      const link = [...surface.querySelectorAll<HTMLButtonElement>('button')].find(button => button.title === anchor)
+      return heading === undefined || link === undefined
+    })
+    expect(unresolved).toEqual([])
+    mounted.unmount()
+  })
+
   it('resolves and scrolls for EVERY table-of-contents anchor of the repo\u2019s own READMEs', () => {
     // The acceptance case for the slug fix, through the real renderer: the
     // READMEs are the documents whose anchors were 0/15 before it (the heading
@@ -507,7 +584,11 @@ describe('the markdown preview surface', () => {
       const mounted = mountEditor(readFileSync(join(process.cwd(), name), 'utf8'), `/p/${name}`)
       const surface = surfaceOf(mounted.container)
       const headings = [...surface.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
-      const tocLines = readFileSync(join(process.cwd(), name), 'utf8').split('\n').slice(34, 44)
+      // CRLF checkout: a README line carries a `\r` terminator, so split on
+      // both endings. (The anchor pattern below happens to survive a trailing
+      // `\r` — `\s` is excluded from the destination — but the slice must not
+      // depend on that accident.)
+      const tocLines = readFileSync(join(process.cwd(), name), 'utf8').split(/\r?\n/).slice(34, 44)
       const tocAnchors = tocLines.flatMap(line => [...line.matchAll(/\]\((#[^)\s]*)\)/g)])
         .map(match => match[1] ?? '')
         .filter(anchor => anchor !== '')

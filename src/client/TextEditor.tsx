@@ -62,6 +62,15 @@ type ViewMode = 'preview' | 'edit'
 const previewScrollMemory = new Map<string, number>()
 const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
 
+/** Whether two spellings are the SAME document — byte-equal, or equal once
+ *  line endings are normalized CRLF/CR → LF. Line endings are not content:
+ *  CodeMirror keeps every document with `\n` endings whatever the file used,
+ *  so the live document of a freshly opened CRLF file differs from the bytes
+ *  it was loaded from by line endings alone. */
+function sameDocument(a: string, b: string): boolean {
+  return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n')
+}
+
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -448,9 +457,20 @@ export function TextEditor(props: FileViewerProps) {
   // the new document — matching the reset-to-null of a clean tab). The
   // updateListener used to re-stringify the WHOLE document on every
   // keystroke (O(docLength) per key) for a draft only preview reads.
+  //
+  // Only an EDIT becomes a draft. Publishing the live document when it is the
+  // loaded content under another line-ending spelling (CodeMirror normalizes
+  // CRLF → LF, so that is every CRLF file) would hand the preview a second
+  // spelling of the same document one render after the mount: the renderer
+  // rebuilds the markdown elements it owns, and every DOM-side pass result
+  // written onto them — heading ids, collapsed anchors — is discarded with
+  // them until the surface's MutationObserver re-runs (a microtask later,
+  // i.e. after a synchronous caller has already looked).
   useEffect(() => {
     const view = viewRef.current
-    setDraft(view === null ? null : view.state.doc.toString())
+    if (view === null) { setDraft(null); return }
+    const live = view.state.doc.toString()
+    setDraft(content !== undefined && sameDocument(live, content) ? null : live)
   }, [mode, content])
 
   const save = (): void => {
