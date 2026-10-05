@@ -250,9 +250,12 @@ WeChat / QQ group QR codes will live here. After uploading the QR images (drag t
 | Action | Keys |
 |---|---|
 | Save edits | `Ctrl/Cmd + S` |
+| Find / replace in file | `Ctrl/Cmd + F` (the panel carries the replace row; `Enter` / `Shift + Enter` next / previous, `Esc` closes) |
+| Find next / previous | `Ctrl/Cmd + G` / `Shift + Ctrl/Cmd + G` |
+| Select next occurrence | `Ctrl/Cmd + D` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
-| Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
+| Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right / Close All Tabs (all scoped to the current pane); Reveal in File Manager (for a tab that has a file) |
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |
@@ -302,6 +305,7 @@ make clean          # remove lib/, *.tgz, playwright-report/, test-results/
 ## ⚠️ Known Limitations
 
 - Git has no push/pull/fetch; Markdown previews provide a manual refresh button with confirmation before discarding unsaved edits; the file tree only watches **expanded** directories (collapsed folders are unsubscribed, and there is no recursive whole-workspace scan); tool inline file-open buttons cannot be intercepted
+- Unsaved drafts: closing an editor tab, deleting the file, and refreshing/closing the page all confirm first (the find/replace panel covers the open editor only, not across files); a save is refused when the file changed on disk since it was loaded (a "Reload from disk" action is offered) instead of silently overwriting those bytes
 - **Which read-only previews exist is the host's call**: spreadsheets / PDF / images / Office go to DSH's own `ui-sidebar-documentpreview`, while the plugin renders only Markdown / HTML and the editable text buffer; the host implementation (rendering details, zoom, refresh timing) follows the DSH version
 - **The browser view exists only in the desktop profile**: the Web profile has no host `browser` kind and the plugin no longer ships a browser tab, so web tabs are desktop-only; login state / third-party cookies / `X-Frame-Options` limits follow the host implementation
 - HTML preview renders the saved file (not unsaved drafts)
@@ -340,7 +344,7 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 ### 📑 Tab Plugins (sidebar pages)
 
 <details>
-<summary><b>24 plugins (click to expand)</b></summary>
+<summary><b>26 plugins (click to expand)</b></summary>
 
 | Plugin | ⭐ | Description |
 |---|---|---|
@@ -359,8 +363,8 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 | [mlosun/dsh-docs-panel](https://github.com/mlosun/dsh-docs-panel) | <img alt="stars" src="https://img.shields.io/github/stars/mlosun/dsh-docs-panel?style=flat&color=4d6bfe" /> | Global docs panel: portable Markdown notes, readable from any workspace |
 | [lnyuqian/dsh-skill-sidebar](https://github.com/lnyuqian/dsh-skill-sidebar) | <img alt="stars" src="https://img.shields.io/github/stars/lnyuqian/dsh-skill-sidebar?style=flat&color=4d6bfe" /> | Skills panel: scans local skill directories, one-click invocation copy, pinning |
 | [g-yixuan/dsh-sidenote](https://github.com/g-yixuan/dsh-sidenote) | <img alt="stars" src="https://img.shields.io/github/stars/g-yixuan/dsh-sidenote?style=flat&color=4d6bfe" /> | Codex-style side chat + selection annotations (a thin consumer plugin) |
-| [thirsty5034/dsh-ssh-tunnel](https://github.com/thirsty5034/dsh-ssh-tunnel) | <img alt="stars" src="https://img.shields.io/github/stars/thirsty5034/dsh-ssh-tunnel?style=flat&color=4d6bfe" /> | Multi-host SSH tunnels + SSH manager tab |
-| [thirsty5034/dsh-git-forge](https://github.com/thirsty5034/dsh-git-forge) | <img alt="stars" src="https://img.shields.io/github/stars/thirsty5034/dsh-git-forge?style=flat&color=4d6bfe" /> | GitHub / Gitea accounts, project grants and push policy |
+| [OMSociety/dsh-ssh-tunnel](https://github.com/OMSociety/dsh-ssh-tunnel) | <img alt="stars" src="https://img.shields.io/github/stars/OMSociety/dsh-ssh-tunnel?style=flat&color=4d6bfe" /> | Multi-host SSH tunnels + SSH manager tab |
+| [OMSociety/dsh-git-forge](https://github.com/OMSociety/dsh-git-forge) | <img alt="stars" src="https://img.shields.io/github/stars/OMSociety/dsh-git-forge?style=flat&color=4d6bfe" /> | GitHub / Gitea accounts, project grants and push policy |
 | [YesSanSan/dsh-conversation-outline](https://github.com/YesSanSan/dsh-conversation-outline) | <img alt="stars" src="https://img.shields.io/github/stars/YesSanSan/dsh-conversation-outline?style=flat&color=4d6bfe" /> | Conversation outline tab: per-turn structure, quick jump, one-line LLM titles |
 | [Wulabalabo/dsh-sidebar-Explorer-Plus](https://github.com/Wulabalabo/dsh-sidebar-Explorer-Plus) | <img alt="stars" src="https://img.shields.io/github/stars/Wulabalabo/dsh-sidebar-Explorer-Plus?style=flat&color=4d6bfe" /> | File-manager tab: upload / move / delete / rename / new folder (write operations) |
 | [yq04/dsh-turn-review](https://github.com/yq04/dsh-turn-review) | <img alt="stars" src="https://img.shields.io/github/stars/yq04/dsh-turn-review?style=flat&color=4d6bfe" /> | Turn review: review agent changes turn by turn |
@@ -369,6 +373,7 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 | [dong-victor/dsh-better-sidebar-starter](https://github.com/dong-victor/dsh-better-sidebar-starter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-starter?style=flat&color=4d6bfe" /> | Run-configurations tab: IDEA-style Run/Debug configs (npm / springboot / python / custom) — one-click launch, history, WebSocket live logs (ANSI colors), parallel instances, cross-platform process-tree kill |
 | [baosfeng/my-dsh-plugins](https://github.com/baosfeng/my-dsh-plugins) | <img alt="stars" src="https://img.shields.io/github/stars/baosfeng/my-dsh-plugins?style=flat&color=4d6bfe" /> | Personal multi-plugin collection (`dsh-file-activity`): a sidebar file-activity tab recording read / added / modified history and stats, flat-browsed by folder, opened with the native preview |
 | [Hoemr/dsh-better-overleaf](https://github.com/Hoemr/dsh-better-overleaf) | <img alt="stars" src="https://img.shields.io/github/stars/Hoemr/dsh-better-overleaf?style=flat&color=4d6bfe" /> | Overleaf tab: direct-CDP browser login (third-party Chromium supported), project switching, local git mirrors under the workspace with two-way sync |
+| [Andor-Z/dsh-turn-outline](https://github.com/Andor-Z/dsh-turn-outline) | <img alt="stars" src="https://img.shields.io/github/stars/Andor-Z/dsh-turn-outline?style=flat&color=4d6bfe" /> | Turn-outline tab: folds the session by user turns (input + tool steps + output) with one-click jump-back to the exact spot in the conversation; zero-LLM, read-only |
 
 </details>
 

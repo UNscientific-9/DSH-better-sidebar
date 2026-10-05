@@ -16,7 +16,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
-import { api, type GitLogEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
+import { api, type GitLogEntry, type GitStatusEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 import type { BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
 import type { Context } from '../src/context-types.ts'
@@ -197,9 +197,10 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       scope.repoRoot === REPO_B ? repoBWorktrees : []
     ))
     const status = vi.spyOn(api, 'gitStatus').mockImplementation(async (scope) => (
-      scope.cwd === REPO_B
-        ? { isRepo: true, branch: 'b-main', entries: [], root: REPO_B, repositories: [REPO_B] }
-        : { isRepo: true, branch: 'a-main', entries: [], root: REPO_A, repositories: [REPO_A, REPO_B] }
+      // Attached sessions ignore the client's cwd override; repoRoot selects the child.
+      scope.repoRoot === REPO_B
+        ? { isRepo: true, branch: 'b-main', entries: [{ path: 'b-change.ts', xy: ' M' }], root: REPO_B, repositories: [REPO_B] }
+        : { isRepo: true, branch: 'a-main', entries: [{ path: 'a-change.ts', xy: ' M' }], root: REPO_A, repositories: [REPO_A, REPO_B] }
     ))
     vi.spyOn(api, 'gitBranch').mockImplementation(async (scope) => (
       scope.repoRoot === REPO_B ? { current: 'b-main', names: ['b-main'] } : { current: 'a-main', names: ['a-main'] }
@@ -231,9 +232,21 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       // Exactly ONE full refresh for the switch (not a burst).
       expect(worktrees.mock.calls.length).toBe(listingsBefore + 1)
       // The shared status follows the same selection.
-      expect(status.mock.calls.some(([scope]) => scope.cwd === REPO_B)).toBe(true)
+      expect(status.mock.calls.at(-1)![0]).toMatchObject({ sessionId: 'session', cwd: WS, repoRoot: REPO_B })
+      expect(container.querySelector(`[title="${t('branch')}: b-main"]`)).not.toBeNull()
+      expect(container.querySelector('[data-path="b-change.ts"]')).not.toBeNull()
+      expect(container.querySelector('[data-path="a-change.ts"]')).toBeNull()
       const worktreeSelect = container.querySelectorAll<HTMLSelectElement>('select')[1]!
       expect(worktreeSelect.value).toBe(REPO_B)
+
+      await act(async () => {
+        repoSelect.value = REPO_A
+        repoSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      await flushEffects()
+      expect(container.querySelector(`[title="${t('branch')}: a-main"]`)).not.toBeNull()
+      expect(container.querySelector('[data-path="a-change.ts"]')).not.toBeNull()
+      expect(container.querySelector('[data-path="b-change.ts"]')).toBeNull()
     } finally {
       act(() => { root.unmount() })
       container.remove()
@@ -418,7 +431,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       const banner = [...container.querySelectorAll<HTMLElement>('[role="alert"]')]
         .find(node => (node.textContent ?? '').includes(`${t('checkoutError')}: dirty worktree`))
       expect(banner).toBeDefined()
-      const input = container.querySelector(`input[placeholder="${t('commitPlaceholder')}"]`)
+      const input = container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
       expect(input).not.toBeNull()
       // The commit bar owns only its own status line: the branch failure is
       // rendered ABOVE it, never under the commit input.
@@ -435,7 +448,7 @@ describe('GitLens (changes tab, git lens) change tree', () => {
   async function mountTree(
     container: HTMLElement,
     root: Root,
-    entries: Array<{ path: string; xy: string }>,
+    entries: Array<{ path: string; xy: string; counts?: GitStatusEntry['counts'] }>,
   ): Promise<void> {
     const changes = entries.filter(row => row.xy !== '  ').length
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes }])
@@ -670,5 +683,119 @@ describe('GitLens (changes tab, git lens) change tree', () => {
       container.remove()
       vi.useRealTimers()
     }
+  })
+
+  /**
+   * Issue #131: the added/deleted line counts the status answer carries are
+   * what the file rows and the group headers print. The header's number is the
+   * sum of the numbers under it, and a row git has no numstat for (an untracked
+   * file, a binary blob) says so instead of printing an invented `+0 −0`.
+   */
+  describe('line counts (#131)', () => {
+    /** One rendered row's/band's count cluster, as its data attributes. */
+    function counted(container: HTMLElement, selector: string): { added: string | null; deleted: string | null; text: string } {
+      const node = container.querySelector<HTMLElement>(selector)
+      expect(node, selector).not.toBeNull()
+      return {
+        added: node!.getAttribute('data-added'),
+        deleted: node!.getAttribute('data-deleted'),
+        text: node!.textContent ?? '',
+      }
+    }
+
+    it('prints each row its own counts and each band the sum of its members', async () => {
+      const { container, root } = makeRoot()
+      try {
+        await mountTree(container, root, [
+          { path: 'src/a.ts', xy: ' M', counts: { additions: 4, deletions: 2 } },
+          { path: 'src/b.ts', xy: ' M', counts: { additions: 1, deletions: 0 } },
+          { path: 'docs/c.md', xy: 'M ', counts: { additions: 3, deletions: 3 } },
+        ])
+
+        expect(counted(container, '[data-path="src/a.ts"] [data-lines="count"]'))
+          .toEqual({ added: '4', deleted: '2', text: '+4−2' })
+        expect(counted(container, '[data-path="src/b.ts"] [data-lines="count"]'))
+          .toEqual({ added: '1', deleted: '0', text: '+1' })
+        expect(counted(container, '[data-path="docs/c.md"] [data-lines="count"]'))
+          .toEqual({ added: '3', deleted: '3', text: '+3−3' })
+
+        // Each band's total IS the sum of the rows under it (4+1 / 2+0 and
+        // 3 / 3) — and each group only counts its own members.
+        expect(counted(container, '[data-group="unstaged"] [data-lines="group"]'))
+          .toEqual({ added: '5', deleted: '2', text: '+5−2' })
+        expect(counted(container, '[data-group="staged"] [data-lines="group"]'))
+          .toEqual({ added: '3', deleted: '3', text: '+3−3' })
+
+        // The same numbers, read back off the DOM: band = Σ members.
+        const sumOf = (group: string, side: 'added' | 'deleted'): number =>
+          [...container.querySelectorAll<HTMLElement>(`[data-group="${group}"] [data-path] [data-lines="count"]`)]
+            .reduce((total, node) => total + Number(node.getAttribute(`data-${side}`)), 0)
+        expect(sumOf('unstaged', 'added')).toBe(5)
+        expect(sumOf('unstaged', 'deleted')).toBe(2)
+      } finally {
+        act(() => { root.unmount() })
+        container.remove()
+      }
+    })
+
+    it('says "new file" for an untracked entry and "binary" for a blob, inventing no numbers', async () => {
+      const { container, root } = makeRoot()
+      try {
+        await mountTree(container, root, [
+          { path: 'new.txt', xy: '??' },
+          { path: 'blob.bin', xy: ' M', counts: { binary: true } },
+        ])
+
+        expect(container.querySelector('[data-path="new.txt"] [data-lines="new"]')?.textContent)
+          .toBe(t('changesNewFile'))
+        expect(container.querySelector('[data-path="blob.bin"] [data-lines="binary"]')?.textContent)
+          .toBe(t('diffBinary'))
+        // Neither row claims a count...
+        expect(container.querySelector('[data-path="new.txt"] [data-lines="count"]')).toBeNull()
+        expect(container.querySelector('[data-path="blob.bin"] [data-lines="count"]')).toBeNull()
+        // ...and with nothing to sum, the band shows no total at all.
+        expect(container.querySelector('[data-group="unstaged"] [data-lines="group"]')).toBeNull()
+        // The count pill still reports how many files changed.
+        expect(container.querySelector('[data-group="unstaged"] [data-count]')?.textContent).toBe('2')
+      } finally {
+        act(() => { root.unmount() })
+        container.remove()
+      }
+    })
+
+    it('republishes the numbers when only the counts moved (same paths, same porcelain)', async () => {
+      vi.useFakeTimers()
+      const { container, root } = makeRoot()
+      try {
+        vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes: 1 }])
+        // Two answers with the SAME path and the SAME porcelain code: only the
+        // line counts moved (more lines appended to an already-modified file).
+        vi.spyOn(api, 'gitStatus')
+          .mockResolvedValueOnce({
+            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', counts: { additions: 1, deletions: 0 } }],
+          })
+          .mockResolvedValue({
+            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', counts: { additions: 7, deletions: 0 } }],
+          })
+        vi.spyOn(api, 'gitBranch').mockResolvedValue({ current: 'main', names: ['main'] })
+        vi.spyOn(api, 'gitLog').mockResolvedValue([])
+
+        mountGit(root)
+        await flushEffects()
+        expect(counted(container, '[data-path="src/a.ts"] [data-lines="count"]').added).toBe('1')
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2_600) })
+        await flushEffects()
+        // Both caches had to notice: the store's field-by-field snapshot
+        // compare AND the lens's content key. Either one ignoring the counts
+        // leaves the row printing its first reading forever.
+        expect(counted(container, '[data-path="src/a.ts"] [data-lines="count"]').added).toBe('7')
+        expect(counted(container, '[data-group="unstaged"] [data-lines="group"]').added).toBe('7')
+      } finally {
+        act(() => { root.unmount() })
+        container.remove()
+        vi.useRealTimers()
+      }
+    })
   })
 })
