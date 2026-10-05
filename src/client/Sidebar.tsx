@@ -41,7 +41,7 @@ import { IconPanelBottomOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
-import { parseDesktopEnv } from './desktop-env.ts'
+import { parseDesktopEnv, probeDesktopWindow } from './desktop-env.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
@@ -240,10 +240,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [dirtyRevision])
 
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
-  //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
-  //             geometry contributes (the real caption-overlay height,
-  //             reactive to maximize/restore). No URL stamp, no preset, no
-  //             guess — plain browsers see zero modification.
+  //   auto    — CONSERVATIVE: the desktop shell's own window contract when it
+  //             publishes one, otherwise only the standard Window Controls
+  //             Overlay geometry contributes (the real caption-overlay
+  //             height, reactive to maximize/restore). No URL stamp, no
+  //             preset, no guess — plain browsers see zero modification.
   //   preset  — an opt-in built-in shell preset (shell-presets.ts) adds its
   //             per-shell strip as the no-WCO fallback.
   //   custom  — the user's own CSS (injected below) + the legacy manual
@@ -254,6 +255,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // both on unmount/boundary swap so a crashed sidebar never leaves them
   // behind.
   const desktopEnv = parseDesktopEnv()
+  // The shell's own geometry contract (absent on a plain browser page and on
+  // shells that only stamp the URL — see desktop-env.ts). Probed per render:
+  // it is a plain read of an immutable service, and the sidebar re-renders on
+  // every session / prefs / viewport change anyway.
+  const desktopWindow = probeDesktopWindow(ctx)
   const wco = useSyncExternalStore(
     useMemo(() => subscribeWco, []),
     getWcoSnapshot,
@@ -261,7 +267,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const scheme = snapshot.prefs.titleBarScheme
   const preset = scheme === 'preset' ? getShellPreset(snapshot.prefs.titleBarPresetId) : undefined
   const titleBarStrip = computeTitleBarStrip(
-    desktopEnv, wco, scheme, preset, snapshot.prefs.titleBarStripPx,
+    desktopEnv, wco, scheme, preset, snapshot.prefs.titleBarStripPx, desktopWindow,
   )
   const titleBarCompat = titleBarStrip > 0
   useEffect(() => {

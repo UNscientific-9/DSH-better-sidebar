@@ -2,8 +2,8 @@
  * Built-in shell-preset data tests: registry integrity (unique ids, non-empty
  * titles, non-empty localized descs, pure strip/detect functions) and the
  * anywhere-labs DSH Desktop entry's strip values (darwin advanced 20px,
- * win32 advanced 32px as the no-WCO fallback, compatibility/plain browser
- * nothing).
+ * win32 advanced 32px as the no-WCO fallback, compatibility / extended /
+ * plain browser nothing).
  */
 import { describe, expect, it } from 'vitest'
 import { getShellPreset, getShellPresets, presetStripFor } from '../src/client/shell-presets.ts'
@@ -63,6 +63,18 @@ describe('shell presets', () => {
       expect(presetStripFor(preset, env({ desktop: true, mode: 'compatibility', platform: 'win32' }))).toBeUndefined()
       expect(presetStripFor(preset, env({ desktop: true, mode: 'advanced', platform: 'linux' }))).toBeUndefined()
       expect(presetStripFor(preset, env({ desktop: false, mode: null, platform: null }))).toBeUndefined()
+    })
+
+    it('reserves nothing in EXTENDED mode either — the caption row is advanced-only', () => {
+      // Extended is a third presentation mode (DSH Desktop 2.x): the shell
+      // hosts the surfaces below its own 36px frame, exactly like
+      // compatibility, and reports a zero content inset through
+      // `ctx.desktopWindow`. Inheriting advanced's caption-row values here
+      // would be the very double reservation issue #430 is about.
+      expect(presetStripFor(preset, env({ desktop: true, mode: 'extended', platform: 'darwin' }))).toBeUndefined()
+      expect(presetStripFor(preset, env({ desktop: true, mode: 'extended', platform: 'win32' }))).toBeUndefined()
+      // ... and the settings badge must not SUGGEST the preset there either.
+      expect(preset.detect?.(env({ desktop: true, mode: 'extended', platform: 'win32' }))).toBe(false)
     })
 
     it('detects advanced shells only as a SUGGESTION signal (never auto-applies)', () => {
