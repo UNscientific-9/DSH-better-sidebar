@@ -35,6 +35,7 @@ import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
+import { fileOpKey, useFileOpStream } from './ops-stream.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
@@ -451,6 +452,45 @@ export function EditorHost(props: {
     }
     prevSaveState.current = current
   }, [toolbar?.saveState, toolbar?.mode])
+
+  // Model-write auto-refresh (issue #855): a `write` / `edit` tool call of THIS
+  // session that settled without an error and named THIS file reloads the
+  // preview — silently, through the very same load path the header's refresh
+  // button uses (so that manual entry keeps working untouched).
+  //
+  // The signal is the plugin's own `changes.ops` delta stream, consumed by ONE
+  // shared poller per session (see ops-stream.ts): this tab joins it only while
+  // it is on screen with a real file, so a parked tab costs no requests, and a
+  // tab of another session never sees these touches at all.
+  const ops = useFileOpStream(scope, visible && !showEmpty && !isDir)
+  /** The stream revision this tab's current path is known fresh at. */
+  const opBaseline = useRef<{ key: string; revision: number } | null>(null)
+  useEffect(() => {
+    const key = `${scope.sessionId}\u0000${path}`
+    const seen = opBaseline.current
+    if (seen === null || seen.key !== key) {
+      // A (re)targeted tab has just loaded the file: only a touch published
+      // AFTER this moment may reload it. Without this, every already-settled
+      // write of the session would fire on open.
+      opBaseline.current = { key, revision: ops.revision }
+      return
+    }
+    const touch = ops.touched.get(fileOpKey(scope.cwd, path))
+    if (touch === undefined || touch.revision <= seen.revision) return
+    // Consume the touch whatever we decide: the file on disk moved past this
+    // tab, and neither branch may fire twice for the same revision.
+    opBaseline.current = { key, revision: ops.revision }
+    // Dirty priority (#228, #855): a draft lives only in the editor instance,
+    // and reloading remounts it — the user's unsaved input must never be
+    // overwritten by what the model wrote. An open edit session is skipped for
+    // the same reason (it would drop the caret); the pre-existing
+    // edit→preview edge reloads on the way back, and the header's refresh
+    // button stays the explicit escape hatch in both cases.
+    if (toolbar?.dirty === true || toolbar?.mode === 'edit') return
+    setReloadSeq(sequence => sequence + 1)
+    // Granular deps: the scope object's identity churns, so only its
+    // sessionId / cwd fields gate this decision.
+  }, [ops, path, scope.sessionId, scope.cwd, toolbar?.dirty, toolbar?.mode])
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
