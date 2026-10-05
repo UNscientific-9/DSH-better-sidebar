@@ -10,7 +10,7 @@
  * through with the visible task's id.
  */
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -86,11 +86,13 @@ afterEach(() => {
 })
 
 describe('TaskWindow two-step delete', () => {
-  it('disarms the delete when the window swaps to another task', async () => {
+  beforeEach(() => {
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
+  })
 
+  it('disarms the delete when the window swaps to another task', async () => {
     await render(taskView('t1', 'First'))
     act(() => { button('Delete').click() })
     expect(hasButton('Confirm delete')).toBe(true)
@@ -105,10 +107,6 @@ describe('TaskWindow two-step delete', () => {
   })
 
   it('makes the first click on the next task an arm, never the delete', async () => {
-    container = document.createElement('div')
-    document.body.append(container)
-    root = createRoot(container)
-
     await render(taskView('t1', 'First'))
     act(() => { button('Delete').click() })      // armed on t1
     await render(taskView('t2', 'Second'))
@@ -119,10 +117,6 @@ describe('TaskWindow two-step delete', () => {
   })
 
   it('still deletes the visible task on the second click', async () => {
-    container = document.createElement('div')
-    document.body.append(container)
-    root = createRoot(container)
-
     await render(taskView('t9', 'Only'))
     act(() => { button('Delete').click() })
     await act(async () => { button('Confirm delete').click() })

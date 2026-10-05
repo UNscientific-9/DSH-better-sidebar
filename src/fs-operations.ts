@@ -137,18 +137,6 @@ async function resolveEntry(
 }
 
 /**
- * Whether `target` IS the workspace root. Comparing the two SPELLINGS is not
- * enough: the resolution above is deliberately lexical (a symlink row must
- * keep addressing the LINK, not its target), and one directory has many
- * spellings — a case variant, a `\\?\` prefix, an 8.3 short name, a mapped
- * drive. Each of them walked straight past this guard and turned "delete this
- * row" into a recursive delete of the whole project. `dev`+`ino` is the
- * identity the filesystem itself uses, and it does not care how the path is
- * spelled. `stat` (not `lstat`) is deliberate: a symlink aimed AT the root is
- * refused too — no link is worth the project behind it. A target that cannot
- * be stat'ed (it may legitimately be gone) falls back to the spelling.
- */
-/**
  * Compare two spellings the way Windows itself does: the extended-length
  * prefix is not part of the name and case is free. Only reached when the
  * volume cannot answer with an inode (FAT/exFAT, some network shares) — weaker
@@ -162,6 +150,18 @@ function sameSpelling(a: string, b: string): boolean {
   return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
 }
 
+/**
+ * Whether `target` IS the workspace root. Comparing the two SPELLINGS is not
+ * enough: the resolution above is deliberately lexical (a symlink row must
+ * keep addressing the LINK, not its target), and one directory has many
+ * spellings — a case variant, a `\\?\` prefix, an 8.3 short name, a mapped
+ * drive. Each of them walked straight past this guard and turned "delete this
+ * row" into a recursive delete of the whole project. `dev`+`ino` is the
+ * identity the filesystem itself uses, and it does not care how the path is
+ * spelled. `stat` (not `lstat`) is deliberate: a symlink aimed AT the root is
+ * refused too — no link is worth the project behind it. A target that cannot
+ * be stat'ed (it may legitimately be gone) falls back to the spelling.
+ */
 async function isWorkspaceRoot(target: string, root: string): Promise<boolean> {
   try {
     const [entry, base] = await Promise.all([stat(target), stat(root)])

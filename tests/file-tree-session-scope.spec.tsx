@@ -12,7 +12,7 @@
  * bit of that state (the workbench relies on the instance staying alive).
  */
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -117,8 +117,9 @@ function mount(): void {
 }
 
 describe('FileTree session scope', () => {
+  beforeEach(mount)
+
   it('drops the previous project\'s selection instead of deleting its files', async () => {
-    mount()
     await render('s1', '/projects/alpha')
     click(rowByName('a.ts'), { ctrlKey: true })
     expect(selectionBar()?.textContent).toContain('1 selected')
@@ -131,7 +132,6 @@ describe('FileTree session scope', () => {
   })
 
   it('keeps the selection when the SAME session re-renders', async () => {
-    mount()
     await render('s1', '/projects/alpha')
     click(rowByName('a.ts'), { ctrlKey: true })
 
@@ -142,7 +142,6 @@ describe('FileTree session scope', () => {
   })
 
   it('closes a delete confirmation opened in the previous session', async () => {
-    mount()
     await render('s1', '/projects/alpha')
     openMenu('a.ts')
     clickMenuitem('Delete')

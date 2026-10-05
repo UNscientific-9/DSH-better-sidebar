@@ -40,6 +40,19 @@ function chunksOf(text: string): AsyncIterable<string | Uint8Array> {
   }
 }
 
+/**
+ * A temp project whose root directory carries letters, so a lowercase variant
+ * of its path is a real spelling of the SAME directory (the win32 cases) and a
+ * link to it stands for the project itself.
+ */
+function makeProject(): { ws: string; inner: string } {
+  const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-root-'))
+  const inner = join(ws, 'ProjDir')
+  mkdirSync(join(inner, 'src'), { recursive: true })
+  writeFileSync(join(inner, 'src', 'keep.ts'), 'x')
+  return { ws, inner }
+}
+
 describe('writeWorkspaceUpload', () => {
   it('writes a file under the upload directory and returns its size', async () => {
     const { path, size } = await writeWorkspaceUpload({
@@ -265,10 +278,7 @@ describe('removeWorkspaceEntry', () => {
   it.runIf(canSymlink)('refuses a symlink aimed AT the root', async () => {
     // The guard resolves the target's identity on purpose: this link stands
     // for the project itself, so it is refused instead of unlinked.
-    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-rootlink-'))
-    const inner = join(ws, 'Proj')
-    mkdirSync(join(inner, 'src'), { recursive: true })
-    writeFileSync(join(inner, 'src', 'keep.ts'), 'x')
+    const { ws, inner } = makeProject()
     symlinkSync(inner, join(ws, 'link-to-proj'))
     try {
       await expect(removeWorkspaceEntry({ cwd: inner, path: join(ws, 'link-to-proj') }))
@@ -348,16 +358,6 @@ describe('session-relative targets (the shared resolution contract, #646)', () =
  * of this one, and a case variant of a real path does not exist.
  */
 describe.runIf(process.platform === 'win32')('workspace-root guard across path spellings', () => {
-  /** A project directory whose name carries letters, so a lowercase variant is
-   *  a real spelling of the same directory. */
-  function makeProject(): { ws: string; inner: string } {
-    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-root-'))
-    const inner = join(ws, 'ProjDir')
-    mkdirSync(join(inner, 'src'), { recursive: true })
-    writeFileSync(join(inner, 'src', 'keep.ts'), 'x')
-    return { ws, inner }
-  }
-
   it('refuses a case variant of the root', async () => {
     const { ws, inner } = makeProject()
     try {

@@ -93,6 +93,13 @@ function mountGit(
   })
 }
 
+/** A detached container + root; every case here unmounts it in its own finally. */
+function makeRoot(): { container: HTMLDivElement; root: Root } {
+  const container = document.createElement('div')
+  document.body.append(container)
+  return { container, root: createRoot(container) }
+}
+
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
@@ -459,12 +466,6 @@ describe('GitLens (changes tab, git lens) change tree', () => {
     await flushEffects()
   }
 
-  function makeRoot(): { container: HTMLDivElement; root: Root } {
-    const container = document.createElement('div')
-    document.body.append(container)
-    return { container, root: createRoot(container) }
-  }
-
   it('folds a directory row per group, independently of the same path on the other side', async () => {
     const { container, root } = makeRoot()
     try {
@@ -706,9 +707,7 @@ describe('GitLens (changes tab, git lens) scope swap', () => {
     vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
     const discard = vi.spyOn(api, 'gitDiscard')
 
-    const container = document.createElement('div')
-    document.body.append(container)
-    const root: Root = createRoot(container)
+    const { container, root } = makeRoot()
     try {
       mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
       await flushEffects()
@@ -733,7 +732,6 @@ describe('GitLens (changes tab, git lens) scope swap', () => {
     } finally {
       act(() => { root.unmount() })
       container.remove()
-      document.body.innerHTML = ''
     }
   })
 })

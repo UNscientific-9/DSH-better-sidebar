@@ -992,9 +992,13 @@ export function FileTree(props: {
    * on screen.
    */
   useEffect(() => {
-    setSelection(new Set())
-    kindRef.current.clear()
+    // The guarded clear spares a swap with nothing selected a re-render of the
+    // whole tree. It returns early when the selection is already empty, so the
+    // anchor is dropped here as well: deselecting the last row leaves an empty
+    // selection still holding one.
+    clearSelection()
     anchorRef.current = null
+    kindRef.current.clear()
     setRowMenu(null)
     setApps(null)
     setCopiedPath(null)
@@ -1010,7 +1014,7 @@ export function FileTree(props: {
     setLoadError(null)
     pendingUploadDir.current = undefined
     resetDrop()
-  }, [sessionId, cwd, resetDrop, setSelection])
+  }, [sessionId, cwd, resetDrop, clearSelection])
 
   const copySelectedPaths = useCallback((): void => {
     void writeClipboard([...selectedRef.current].join('\n'))
