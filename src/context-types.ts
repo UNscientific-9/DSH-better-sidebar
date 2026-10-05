@@ -626,51 +626,6 @@ export interface SidebarConversation {
   }
 }
 
-/** Insets (CSS px) the desktop shell reserved for its own native chrome. */
-export interface SidebarDesktopWindowInsets {
-  readonly top: number
-  readonly right: number
-  readonly bottom: number
-  readonly left: number
-}
-
-/** The shell's top caption hit-region (drag band + excluded native controls). */
-export interface SidebarDesktopWindowDragRegion {
-  readonly height: number
-  readonly leftInset: number
-  readonly rightInset: number
-}
-
-/**
- * The desktop shell's native-window geometry contract (`ctx.desktopWindow`,
- * a CLIENT cordis service of the official Electron shell; see its
- * docs/plugin-services). Mirrored structurally — like every other service
- * face here — because the plugin must not value-import `dsh-plugin-desktop`
- * (and the package is dev-time absent anyway).
- *
- * The service is OPTIONAL: a plain browser never provides it, so it is
- * probed through {@link ./client/desktop-env.ts} rather than listed in
- * `dsh.client.inject` (a missing inject dependency would keep the whole
- * client plugin pending forever). Only `safeAreaInsets.top` is consumed
- * today (the strip the sidebar yields at the top); the remaining fields are
- * mirrored to keep the contract legible at the probe site.
- */
-export interface SidebarDesktopWindowService {
-  /**
-   * `compatibility` / `extended` = the shell owns a frame ABOVE the content
-   * (both report a zero content inset); `advanced` = a compact caption row
-   * is drawn INTO the content (as of upstream master both darwin and win32 report 32; Linux 0 — always trust the shell's reported value).
-   */
-  readonly mode: 'compatibility' | 'extended' | 'advanced'
-  readonly platform: 'darwin' | 'win32' | 'linux'
-  /** Capability-gated native material behind the renderer. */
-  readonly material: 'off' | 'transparent'
-  /** Where the shell starts placing the upstream content surface. */
-  readonly safeAreaInsets: SidebarDesktopWindowInsets
-  /** Native caption hit region; interactive children must opt out of dragging. */
-  readonly dragRegion: SidebarDesktopWindowDragRegion
-}
-
 /** Read-only subset of api-workspace-controller's public IWorkspaces.list. */
 export interface SidebarWorkspacesService {
   readonly list: {
