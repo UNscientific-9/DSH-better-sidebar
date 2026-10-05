@@ -289,15 +289,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   -webkit-app-region: no-drag;
 }
 
-/* ── Position compatibility mode (Windows native title bar) ────────────── */
-
-/* Windows frameless / hidden-title-bar windows draw the native caption
-   strip (minimize / maximize / close) at the window's top-right corner,
-   OVER the web content. When the user enables the "position compatibility"
-   pref, the Sidebar shell publishes the strip height as
-   `--dsh-title-bar-strip` plus `body[data-dsh-title-bar-compat]` for the
-   user's own CSS; the plugin's remaining chrome (the bottom workbench) sits
-   at the window's bottom and is never under the top strip. */
 /* Icon button: the app's own icon-button pattern (ui-workspace) — a 28px
    circle, secondary label, hover fill; no border so the icon alone is the
    affordance. */
