@@ -49,10 +49,12 @@
 1. **不做「每 tick 至多 1 次请求」的跨页合并**：文件变动页的会话透镜保留**自己的**轮询器（它的启停条件是
    「tab 可见 **且** 会话透镜在屏」，与编辑器的「页签在屏」是两条不同的可见性）。因此一个会话同时开着
    文件变动页（会话透镜）与编辑器时，该会话每 tick 最多有 2 个 `changes.ops` 请求（原来就有 1 个）。
+   **实测（一次性探针，同一会话同一 cwd）：会话透镜单独 1/tick、编辑器单独 1/tick、两者同开 2/tick。**
    把两者合并到同一条流会改动一个已被 591 行 spec 钉住的既有特性（含「只在会话透镜在屏时轮询」这条断言），
    超出本 issue 的范围。**已如实记录为后续可选项。**
 2. **不给 dirty 态加「有新版本」提示**：改为静默跳过。理由是加提示需要新词典 key（20 份），而
-   dirty 时用户正在编辑器里，页头既有 dirty 点、刷新按钮与保存时的 `fs-conflict` 提示三条现成出口；
+   dirty 时用户正在编辑器里，现成的出口是页头刷新按钮与「保存 → `fs-conflict` 横幅的 reload」
+   两条（`dirty` 点只是状态显示，既有的「编辑 → 预览」边沿**自身也带 dirty 守卫**，dirty 时不成立）；
    「可见且不打扰」的提示方式没有不引入新 UI 与词条的现成载体。
 3. **不做「每 op 一次精读 diff」**：只做重载，不把模型写的正文直接注入预览（PR #216 也没有）。
 4. **流的记录**在最后一个成员离开后**保留**（只停轮询，并把事件窗口从 400 收窄到 32）：回来时从持久化的
@@ -65,16 +67,18 @@
   （模式开关不渲染），重挂会回到文档开头——**内容不会丢**（dirty 时根本不刷新）。markdown / html
   **预览态**的滚动位置由 `TextEditor` 既有的模块级 per-file 滚动记忆恢复（`previewScrollMemory` +
   布局 effect），但 **jsdom 量不出 `scrollHeight`，这层是读源码得出、未在真机浏览器验证**。
-- **真实浏览器未验证**：本批只在 jsdom 里验证了行为（12 条用例 + 逐条变异证伪）。挂载 lane 证明的是
+- **真实浏览器未验证**：本批只在 jsdom 里验证了行为（14 条用例 + 逐条变异证伪）。挂载 lane 证明的是
   「打包产物在真机挂载后不 crash」，它没有模型回合，无法在 lane 里造出真实的 `tool/call`。
 - 相对路径命中需要会话 `cwd` 已知：`scope.cwd` 缺失时（极少数降级路径）模型写的相对路径无法归一，
   那一类改动不会触发刷新（绝对路径不受影响）。
 
 ## 6. 验证
 
-- `pnpm typecheck` / `pnpm lint` / `pnpm exec vitest run --maxWorkers=3`：184 文件 2150 通过 / 13 跳过 / 0 失败。
-- `tests/editor-auto-refresh.spec.tsx`（12 例，jsdom + 假计时器），逐条做了「还原源码即红」的变异验证：
+- `pnpm typecheck` / `pnpm lint` / `pnpm exec vitest run --maxWorkers=3`：184 文件 2152 通过 / 13 跳过 / 0 失败。
+- `tests/editor-auto-refresh.spec.tsx`（14 例，jsdom + 假计时器），逐条做了「还原源码即红」的变异验证：
   重载调用、路径命中、dirty 判定、编辑态判定、结算判定、基线、会话分账、成员选举、park/resume 记录、
+  放行 `kind === 'read'`（→「模型 read 本文件零重读」红）、放松 `EditorHost` 的 `opBaseline` 守卫
+  （只留 `null` 判断、不再按路径比对基线 →「重新定向到刚被 touch 的路径不重复读」红，既有 12 例仍全绿）、
   「无事件不轮询 fsRead」（变异方式：塞进一个周期性 `fsRead`）。
 - `tests/editor-refresh.spec.tsx`（#167 的既有 4 条）未改动、仍绿。
 - 真实挂载 lane：`DSH_CMD='npx -y --package @deepseek-ai/dsh@0.2.0-rc.1 dsh' pnpm test:mount`。
