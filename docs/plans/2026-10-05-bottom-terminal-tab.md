@@ -69,14 +69,16 @@ DSH 0.1.6 起宿主自带右列终端（`ui-sidebar-terminal`，kind `terminal`�
 | `src/client/terminal.module.css` | 容器与状态面板样式，`color` 一律 `var(--dsw-*)` |
 | `src/client/chunks/terminal.tsx` | chunk 入口（`export { TerminalBottomView }`），**只**被 chunk 构建引用 |
 | `src/client/terminal-lazy.tsx` | `LazyTerminalBottom = lazyChunkComponent('terminal', …)`，核心 bundle 侧唯一的引用点 |
-| `tests/terminal-tab.spec.tsx` | 14 条单元用例（承载面 / 宿主契约 / 降级与恢复 / 身份助手 / 关闭钩子） |
+| `tests/terminal-tab.spec.tsx` | 15 条单元用例（承载面 / 宿主契约 / 降级与恢复 / 身份助手 / 关闭钩子） |
 
 ### 4.2 修改文件
 
 - `src/client/service.ts`：新增 `TabDescriptor.bottomOnly?: boolean`；`openTab` 的原生分支条件加
   `&& descriptor.bottomOnly !== true`（落点强制 `'bottom'`）。
 - `src/client/native/index.ts`：`sync()` 里 `if (descriptor.bottomOnly === true) continue`——
-  既不注册原生 tab 类型，也不占 guide 条目。
+  既不注册原生 tab 类型，也不占 guide 条目。**这行的单元守护在 `tests/native-registration.spec.ts`**
+  （「a bottomOnly descriptor never reaches the native surface」：断言注册表的**事件日志**里没有该 id、
+  也没有它的 slot，且 guide 条目只有 `files` 与 `git`；删掉这行即红）。
 - `src/client/builtins/tabs.tsx`：第 6 个描述符 `terminal-bottom`；`builtinTabs()` 改为收 `ctx`
   （`onClose` 要探测 `ctx.webTerminals` 才能结束进程）。`src/client/builtins/index.ts` 透传。
 - chunk 名镜像：`tsdown.config.ts` / `src/bundle-route.ts` / `src/client/chunk-loader.ts` /
@@ -113,19 +115,27 @@ DSH 0.1.6 起宿主自带右列终端（`ui-sidebar-terminal`，kind `terminal`�
 
 ## 5. 证据
 
-- `tests/terminal-tab.spec.tsx`：14 条。xterm 与 addon-fit 都被 `vi.mock`（jsdom 里真 xterm 需要 canvas
+- `tests/terminal-tab.spec.tsx`：15 条。xterm 与 addon-fit 都被 `vi.mock`（jsdom 里真 xterm 需要 canvas
   `getContext`，开不起来），所以断言的是**管道**：`view()` 的调用形状（含 contentId 恒定性）、
-  `mount()`/detach、`write`/`resize` 转发、snapshot 重放 + `acknowledge`、降级面板、`onClose` → `close()`。
+  `mount()`/detach、`write`/`resize` 转发、snapshot 重放 + `acknowledge`、降级面板、`onClose` → `close()`，
+  以及「新建终端」走**真实** `service.updateTab`（先试 `surface.update`，无原生记录时落
+  `store.reduce(patchTab)`——`bottomOnly` 类型永远没有原生记录，所以这是它唯一的真实路径）。
   真实 emulator 只由挂载 lane 的浏览器运行覆盖。
+- `tests/native-registration.spec.ts` 新增一条：`bottomOnly` 描述符**不产生任何原生注册**（tab 类型 / slot /
+  guide 条目），断言写在注册表的事件日志上。**补这条的原因**：验证节点实测把 `sync()` 里那行
+  `if (descriptor.bottomOnly === true) continue` 删掉后，14 个相关 spec、158 条断言**全绿**——
+  「不得进入原生承载面」这半边原先只有挂载 lane 抓得住（现在删掉即红，见第 6 节）。
 - `tests/chunk-artifact.spec.ts` 新增一条：`lib/client-terminal.js` 里必须有 xterm 的
   `xterm-char-measure-element` 与 `@xterm/xterm/lib/xterm.js` 区域标记，而 `lib/client.js` /
   `lib/client-registry.js` 里**一个都不能有**（回退任一半即红）。
 - `tests/builtins.spec.ts`：内置清单从 5 变 6，并新增「`terminal-bottom` 是 `bottomOnly`、可见、有图标与组件，
   而其余每个内置类型都不是 `bottomOnly`」。
-- `tests/e2e/mount.e2e.ts` 新增第三条（真实浏览器）：展开底部工作台 → `+` → Terminal → 断言
-  `[data-dsh-bottom-terminal]` 挂载、`.xterm` 出现、chunk 请求 `/sidebar/bundle/terminal.js` 有响应、
-  状态不停在 `unavailable`/`loading`、无 pageerror、**且宿主 `[data-sidebar-right-guide-entry="terminal"]`
-  仍然恰好 1 条**（`terminal-bottom` 的 guide 条目必须是 0）。
+- `tests/e2e/mount.e2e.ts` 新增第三条（真实浏览器）：展开底部工作台 → **点空面板里的类型卡片
+  「Terminal」**（`PaneEmptyCards`，与 `+` 菜单共用同一份 `buildNewTabOptions`；用卡片而不是 `+` 是因为
+  卡片不受 tab 条滚动视口影响）→ 断言 `[data-dsh-bottom-terminal]` 挂载、`.xterm` 出现、chunk 请求
+  `/sidebar/bundle/terminal.js` 有响应、状态不停在 `unavailable`/`loading`、无 pageerror、**且宿主
+  `[data-sidebar-right-guide-entry="terminal"]` 仍然恰好 1 条**（`terminal-bottom` 的 guide 条目必须是 0）。
+  **`+` 菜单那条点击路径在 lane 里没有覆盖**。
 
 ## 6. 实施偏差与未验证项
 
@@ -138,6 +148,10 @@ DSH 0.1.6 起宿主自带右列终端（`ui-sidebar-terminal`，kind `terminal`�
 - **未验证：真浏览器观感**。`tests/e2e/mount.e2e.ts` 的新用例断言的是结构、状态与错误面，
   **不**断言渲染像素、字符宽度、配色可读性。配色走 `--dsw-*` 令牌（`tests/theme.spec.ts` 守护
   「无硬编码颜色字面量」），但令牌解析出来的实际对比度没有截图核对过。
-- **未验证：真实挂载 lane 是否在本分支上跑过**。见交付报告结尾的「未验证项」段。
+- **真实挂载 lane：已跑过**（实现节点与独立验证节点都在本分支上跑过 `pnpm test:mount`；第三条用例在真实
+  `dsh web` 里通过，宿主 `terminal` guide 条目恰好 1 条、`terminal-bottom` 的条目为 0）。**口径**：完整
+  lane 曾因**无关** spec `tests/e2e/zz-expand-refresh.e2e.ts` 抖动失败过一次（v0.24.1 修的「展开刷新」
+  那条时序敏感用例，与本分支无关），**单独重跑即过**——不是本分支的回归，但「完整 lane 一次通过」
+  这句话因此不能当证据用。
 - **刻意不做**：宿主 `ui-sidebar-terminal` 的 `TerminalTheme`（OSC 4/10-12 拦截）没有照搬——xterm 自己
   处理 OSC，需要时再补。
