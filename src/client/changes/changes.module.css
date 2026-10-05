@@ -18,15 +18,29 @@
 
 /* ── Git lens (the former git panel) ───────────────────────────────────── */
 
+/* The Git lens ROOT is not a scroller (#194): it is the fixed frame that holds
+   the non-scrolling head band (branch / repository / worktree pickers) above
+   the ONE inner scroll body and the commit bar below it. Everything that used
+   to scroll here — the change groups, the history, the state lines — now
+   scrolls inside `.gitScroll`, so the branch bar and the commit box stay on
+   screen while the list moves. */
 .git {
   flex: 1;
   min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* The inner scroll body: the change groups + the history. It owns both scroll
+   axes' policy — vertical scrolling for the list, clipping for anything wider
+   than the panel (tab pages never scroll horizontally: content wraps or
+   truncates to the panel width instead of panning sideways). */
+.gitScroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   overflow-y: auto;
-  /* Tab pages never scroll horizontally: content wraps or truncates to the
-     panel width instead of panning sideways. */
   overflow-x: hidden;
 }
 
@@ -191,14 +205,13 @@
   .row:not(:hover):not(:focus-within) .rowAction { opacity: 1; }
 }
 
-/* ── Commit bar (docked to the bottom edge of the scroll area) ─────────── */
+/* ── Commit bar (docked below the scroll body, never inside it) ─────────── */
 
+/* Since #194 the bar is a SIBLING of `.gitScroll` in the lens root's column:
+   it is always on screen, so it needs neither `position: sticky` nor a
+   stacking order over the sticky group headers (they are inside the scroller,
+   which clips them). */
 .commitBar {
-  position: sticky;
-  bottom: 0;
-  /* Above the sticky group headers: the commit bar is the surface the user
-     interacts with when they scroll to the bottom of the list. */
-  z-index: 3;
   flex: none;
   display: flex;
   flex-direction: column;

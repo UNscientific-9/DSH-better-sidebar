@@ -863,9 +863,12 @@ export function GitLens(props: GitLensProps) {
   )
 
   return (
-    <div className={css.git}>
+    <div className={css.git} data-git-root>
+      {/* The non-scrolling head: the branch / repository / worktree band stays
+          on screen while the change list and the history scroll under it
+          (#194). */}
       {(repoChoices.length > 1 || worktrees.length > 1 || branch !== '') && (
-        <div className={css.selectors}>
+        <div className={css.selectors} data-git-head>
           {repoChoices.length > 1 && (
             <select
               className={css.select}
@@ -908,66 +911,120 @@ export function GitLens(props: GitLensProps) {
         </div>
       )}
 
-      {viewError !== null && <Notice kind="error" role="alert">{viewError}</Notice>}
+      {/* The ONE scroll body: the change groups and the history scroll here,
+          between the fixed head band and the fixed commit bar (#194). */}
+      <div className={css.gitScroll} data-git-scroll>
+        {viewError !== null && <Notice kind="error" role="alert">{viewError}</Notice>}
 
-      {snapshot === null && status.loading && <Notice kind="loading" tone="page">{t('loading')}</Notice>}
-      {snapshot === null && !status.loading && status.error && <Notice kind="error" tone="page">{t('error')}</Notice>}
-      {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
-      {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
+        {snapshot === null && status.loading && <Notice kind="loading" tone="page">{t('loading')}</Notice>}
+        {snapshot === null && !status.loading && status.error && <Notice kind="error" tone="page">{t('error')}</Notice>}
+        {snapshot !== null && !isRepo && <Notice kind="empty" tone="page">{t('notRepo')}</Notice>}
+        {snapshot?.truncated === true && <Notice kind="warn">{t('statusTruncated')}</Notice>}
 
-      {clean && <Notice kind="empty" tone="page">{t('changesClean')}</Notice>}
+        {clean && <Notice kind="empty" tone="page">{t('changesClean')}</Notice>}
 
-      {isRepo && !clean && (
-        <>
-          {/* Each group is its own block so its sticky header is released (and
-              replaced) exactly when the group scrolls away. */}
-          <div className={css.group} data-group="unstaged">
-            <SectionHeader
-              className={css.groupHeader}
-              label={t('unstaged')}
-              action={unstagedEntries.length > 0
-                ? (
-                  <IconButton
-                    className={css.headerAction}
-                    size="sm"
-                    disabled={busy}
-                    label={t('stageAll')}
-                    icon={<IconPlusOutlineRegular size={14} />}
-                    onClick={() => { stageAll(false) }}
-                  />
-                )
-                : undefined}
-            >
-              <span className={css.countPill} data-count={unstagedEntries.length}>{unstagedEntries.length}</span>
-            </SectionHeader>
-            {renderTree(unstagedTree, false)}
-          </div>
-          <div className={css.group} data-group="staged">
-            <SectionHeader
-              className={css.groupHeader}
-              label={t('staged')}
-              action={stagedEntries.length > 0
-                ? (
-                  <IconButton
-                    className={css.headerAction}
-                    size="sm"
-                    disabled={busy}
-                    label={t('unstageAll')}
-                    icon={<IconTrashOutlineRegular size={14} />}
-                    onClick={() => { stageAll(true) }}
-                  />
-                )
-                : undefined}
-            >
-              <span className={css.countPill} data-count={stagedEntries.length}>{stagedEntries.length}</span>
-            </SectionHeader>
-            {renderTree(stagedTree, true)}
-          </div>
-        </>
-      )}
+        {isRepo && !clean && (
+          <>
+            {/* Each group is its own block so its sticky header is released (and
+                replaced) exactly when the group scrolls away. */}
+            <div className={css.group} data-group="unstaged">
+              <SectionHeader
+                className={css.groupHeader}
+                label={t('unstaged')}
+                action={unstagedEntries.length > 0
+                  ? (
+                    <IconButton
+                      className={css.headerAction}
+                      size="sm"
+                      disabled={busy}
+                      label={t('stageAll')}
+                      icon={<IconPlusOutlineRegular size={14} />}
+                      onClick={() => { stageAll(false) }}
+                    />
+                  )
+                  : undefined}
+              >
+                <span className={css.countPill} data-count={unstagedEntries.length}>{unstagedEntries.length}</span>
+              </SectionHeader>
+              {renderTree(unstagedTree, false)}
+            </div>
+            <div className={css.group} data-group="staged">
+              <SectionHeader
+                className={css.groupHeader}
+                label={t('staged')}
+                action={stagedEntries.length > 0
+                  ? (
+                    <IconButton
+                      className={css.headerAction}
+                      size="sm"
+                      disabled={busy}
+                      label={t('unstageAll')}
+                      icon={<IconTrashOutlineRegular size={14} />}
+                      onClick={() => { stageAll(true) }}
+                    />
+                  )
+                  : undefined}
+              >
+                <span className={css.countPill} data-count={stagedEntries.length}>{stagedEntries.length}</span>
+              </SectionHeader>
+              {renderTree(stagedTree, true)}
+            </div>
+          </>
+        )}
 
+        {isRepo && (
+          <>
+            <SectionHeader label={t('history')} count={logEntries.length > 0 ? logEntries.length : undefined} />
+            {logEntries.length === 0 && logFailed && <Notice kind="error">{t('historyLoadError')}</Notice>}
+            {logEntries.length === 0 && !logFailed && logEnded && <Notice kind="empty" tone="page">{t('changesNoHistory')}</Notice>}
+            {logEntries.map(entry => (
+              <div
+                key={entry.hashFull}
+                role="button"
+                tabIndex={0}
+                className={css.logRow}
+                data-selected={selectedRef?.kind === 'commit' && selectedRef.hashFull === entry.hashFull ? 'true' : undefined}
+                title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
+                onClick={() => { onPreview(commitRefOf(entry)) }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onPreview(commitRefOf(entry))
+                  }
+                }}
+                onContextMenu={(event) => { openHistoryMenu(event, entry) }}
+              >
+                <span className={css.logLine1}>
+                  <span className={css.logHash}>{entry.hash}</span>
+                  <span className={css.logSubject}>{entry.subject}</span>
+                </span>
+                <span className={css.logLine2}>
+                  {refNames(entry.refs).map(ref => (
+                    <span key={ref} className={css.logRef}>{ref}</span>
+                  ))}
+                  <span className={css.logMeta}>{entry.author} · {relativeTime(entry.date)}</span>
+                </span>
+              </div>
+            ))}
+            {!logEnded && (
+              <button
+                type="button"
+                className={css.logMore}
+                disabled={logLoadingMore || busy}
+                onClick={() => { void loadMoreLog() }}
+              >
+                {logLoadingMore ? t('loading') : t('loadMore')}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* The commit bar is OUTSIDE the scroll body: it is the tab's persistent
+          action surface, so the message being written never scrolls away
+          (#194). */}
       {isRepo && (
-        <div className={css.commitBar}>
+        <div className={css.commitBar} data-commit-bar>
           <div className={css.commitRow}>
             <span className={css.commitInputWrap}>
               {/* A native textarea (the primitives ship no multiline input):
@@ -1034,53 +1091,6 @@ export function GitLens(props: GitLensProps) {
               banner. */}
           {actionError !== null && <Notice kind="error" tone="inline" role="alert">{actionError}</Notice>}
         </div>
-      )}
-
-      {isRepo && (
-        <>
-          <SectionHeader label={t('history')} count={logEntries.length > 0 ? logEntries.length : undefined} />
-          {logEntries.length === 0 && logFailed && <Notice kind="error">{t('historyLoadError')}</Notice>}
-          {logEntries.length === 0 && !logFailed && logEnded && <Notice kind="empty" tone="page">{t('changesNoHistory')}</Notice>}
-          {logEntries.map(entry => (
-            <div
-              key={entry.hashFull}
-              role="button"
-              tabIndex={0}
-              className={css.logRow}
-              data-selected={selectedRef?.kind === 'commit' && selectedRef.hashFull === entry.hashFull ? 'true' : undefined}
-              title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
-              onClick={() => { onPreview(commitRefOf(entry)) }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault()
-                  onPreview(commitRefOf(entry))
-                }
-              }}
-              onContextMenu={(event) => { openHistoryMenu(event, entry) }}
-            >
-              <span className={css.logLine1}>
-                <span className={css.logHash}>{entry.hash}</span>
-                <span className={css.logSubject}>{entry.subject}</span>
-              </span>
-              <span className={css.logLine2}>
-                {refNames(entry.refs).map(ref => (
-                  <span key={ref} className={css.logRef}>{ref}</span>
-                ))}
-                <span className={css.logMeta}>{entry.author} · {relativeTime(entry.date)}</span>
-              </span>
-            </div>
-          ))}
-          {!logEnded && (
-            <button
-              type="button"
-              className={css.logMore}
-              disabled={logLoadingMore || busy}
-              onClick={() => { void loadMoreLog() }}
-            >
-              {logLoadingMore ? t('loading') : t('loadMore')}
-            </button>
-          )}
-        </>
       )}
 
       {/*
