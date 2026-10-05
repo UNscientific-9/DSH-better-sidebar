@@ -158,7 +158,9 @@ function sameSpelling(a: string, b: string): boolean {
  * drive. Each of them walked straight past this guard and turned "delete this
  * row" into a recursive delete of the whole project. `dev`+`ino` is the
  * identity the filesystem itself uses, and it does not care how the path is
- * spelled.
+ * spelled — read as `bigint`, because the file id is 64-bit and a JS number
+ * rounds it above 2^53, at which point two unrelated entries compare equal and
+ * a legitimate delete is refused as "the workspace root".
  *
  * `lstat` (not `stat`) is deliberate, and so is the removal below using the
  * same call: the question is whether THIS ENTRY is the root, so a symlink is
@@ -170,9 +172,12 @@ function sameSpelling(a: string, b: string): boolean {
  */
 async function isWorkspaceRoot(target: string, root: string): Promise<boolean> {
   try {
-    const [entry, base] = await Promise.all([lstat(target), lstat(root)])
+    const [entry, base] = await Promise.all([
+      lstat(target, { bigint: true }),
+      lstat(root, { bigint: true }),
+    ])
     // No inode = no identity: fall back to the spelling.
-    if (entry.ino === 0 || base.ino === 0) return sameSpelling(target, root)
+    if (entry.ino === 0n || base.ino === 0n) return sameSpelling(target, root)
     return entry.dev === base.dev && entry.ino === base.ino
   } catch {
     return sameSpelling(target, root)
