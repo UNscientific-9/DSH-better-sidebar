@@ -275,16 +275,16 @@ describe('removeWorkspaceEntry', () => {
       .rejects.toMatchObject({ code: 'fs-error' })
   })
 
-  it.runIf(canSymlink)('refuses a symlink aimed AT the root', async () => {
-    // The guard resolves the target's identity on purpose: this link stands
-    // for the project itself, so it is refused instead of unlinked.
+  it.runIf(canSymlink)('unlinks a symlink aimed AT the root, leaving the project intact', async () => {
+    // The guard compares the ENTRY's own identity (the same `lstat` the
+    // removal below uses), never what the link resolves to: the link goes and
+    // the project behind it stays — the behaviour the string compare had.
     const { ws, inner } = makeProject()
     symlinkSync(inner, join(ws, 'link-to-proj'))
     try {
-      await expect(removeWorkspaceEntry({ cwd: inner, path: join(ws, 'link-to-proj') }))
-        .rejects.toMatchObject({ code: 'fs-error' })
+      await removeWorkspaceEntry({ cwd: inner, path: join(ws, 'link-to-proj') })
+      expect(existsSync(join(ws, 'link-to-proj'))).toBe(false)
       expect(existsSync(join(inner, 'src', 'keep.ts'))).toBe(true)
-      expect(existsSync(join(ws, 'link-to-proj'))).toBe(true)
     } finally {
       rmSync(ws, { recursive: true, force: true })
     }
