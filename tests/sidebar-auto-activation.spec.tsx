@@ -534,7 +534,6 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     // Reached through the workbench its own activation path: the click IS the
     // reader looking at the page.
     act(() => { sidebar.service.activateTab(tab!.id, { sessionId: sidebar.sessionId }) })
-    sidebar.store.reduceFor(sidebar.sessionId, st => ({ ...st, unread: [] }))
     expect(sidebar.store.getSnapshot().state!.unread).toEqual([])
     expect(unreadDots(sidebar)).toHaveLength(0)
   })

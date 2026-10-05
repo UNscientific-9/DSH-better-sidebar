@@ -15,6 +15,7 @@
 - `registerTab` / `registerFileViewer` 签名不变；
 - `openTab` / `openFile` 默认落到原生右侧栏；新增可选 `OpenTabSeed.target`（`'right'` 默认 / `'bottom'` 落插件的底部工作台 / `'side'` 落**原生栏的第二个格**，见下表「在侧边打开」）；
 - `updateTab` / `closeTab` / `activateTab` 认识原生 tab id（插件为每个原生 tab 维护一条合成 `SidebarTab` 记录，`tab.meta` / `tab.path` 的写入照旧生效）；`activateTab` 对原生 tab 经宿主 `ISidebarRight.focus`（dsh ≥ 0.1.5）聚焦 tab 及其所在 pane——多实例外部插件 tab（无 `(kind, 地址)` 身份可重开）因此也能被程序化唤起到前台。
+- 新增可选 `OpenTabSeed.reveal: false`（只放置、不聚焦，后台激活用）与配套的 `clearUnread(type, sessionId)`（消除「有新页面」红点），两者均 **v0.25.0+**。
 
 行为差异（写在这里以免踩坑）：
 
@@ -755,6 +756,13 @@ interface BetterSidebarService {
   /** 激活一个已打开的 tab（tab 栏点击路径；触发 descriptor.onActivate；
    *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
   activateTab(tabId: string, scope?: SessionScope): void
+  /** 消除某个 tab 类型在一个会话里的「有新页面」红点（读者刚看过那一页，
+   *  v0.25.0+）。红点由插件自己的后台激活路径点亮（配合 `OpenTabSeed.reveal:
+   *  false`），这里是「清除」那一半：承载面渲染了带标记的 tab，就该把它关掉。
+   *  未标记的类型是严格 no-op（不通知、不落盘），所以可以在每次可见性变化时
+   *  直接调用。底部工作台经 `activateTab` 清除（在那里点击本身就是激活），
+   *  原生栏芯片是调用方；`sessionId` 是具名的（原生面同时挂着多个会话）。 */
+  clearUnread(type: TabType, sessionId: string): void
   /** 在 scope.sessionId 的侧边栏编辑器打开一个文件（title 缺省为文件名；
    *  id 按路径派生（`editor:` + path），与内置 open-path 拦截一致，不同文件可并排打开）。
    *  注意：path 派生 id 只对 openFile/openSidebarFile 成立；editorExplorer 合并模式的
@@ -786,6 +794,12 @@ interface OpenTabSeed {
    *  已打开的同名资源并存，所以「在侧边打开同一个文件」真的会新开一格。
    *  path-less 的 editor seed 是文件页（files），'side' 只影响带 path 的打开。*/
   target?: 'right' | 'bottom' | 'side'
+  /** 这次打开是否允许**聚焦**（只对 `target: 'right'` 有意义：底部工作台的
+   *  打开本来就落在它自己的格子里）。缺省 true——面向消费者的打开都是「给我
+   *  看这个」。后台激活（新子代理 / 新后台任务）传 false：宿主只把页面放进去、
+   *  不抢焦点，读者正在看的那一页因此活下来，调用方改用未读红点提示（见
+   *  `clearUnread`）。v0.25.0+ */
+  reveal?: boolean
 }
 
 /** 文件图标注册描述符（v0.19.0+，features 含 'fileIcons'）。 */

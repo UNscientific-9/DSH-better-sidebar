@@ -733,6 +733,45 @@ describe('v0.12.0 store additions', () => {
   })
 })
 
+describe('unread mark persistence (v0.25.0)', () => {
+  // "A page the reader has not looked at" must outlive the mount that raised
+  // it (the mark is drawn by a chip that unmounts on every session switch and
+  // every page reload), so the mark rides the session's persisted state — and
+  // sanitizeState's `unread` branch is the ONLY thing that carries it back.
+  it('survives a reload: a fresh store reads the mark back from localStorage', () => {
+    const g = globalThis as Record<string, unknown>
+    const storage = new Map<string, string>()
+    const timers: Array<() => void> = []
+    g.window = {
+      clearTimeout: () => {},
+      setTimeout: (fn: () => void) => { timers.push(fn); return timers.length },
+      innerWidth: 1024,
+      innerHeight: 800,
+    }
+    g.localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+    }
+    try {
+      const first = createSidebarStore()
+      first.setSession('s1')
+      expect(first.markUnread('subagent')).toBe(true)
+      // The write is debounced; fire the pending timer the page would hit
+      // after the delay, then read the persisted layout back.
+      for (const fn of timers.splice(0)) fn()
+      expect(JSON.parse(storage.get('dsh-sidebar:v1:s1')!).unread).toEqual(['subagent'])
+      // A reload is a brand-new store over the SAME storage.
+      const reloaded = createSidebarStore()
+      reloaded.setSession('s1')
+      expect(reloaded.getSnapshot().state!.unread).toEqual(['subagent'])
+    } finally {
+      delete g.window
+      delete g.localStorage
+    }
+  })
+})
+
 describe('revealPaths (show in folder)', () => {
   it('expands ancestors with their ABSOLUTE path (leading separator preserved)', () => {
     // POSIX: the root (/w/src) is not itself expanded, but the subdirs
