@@ -9,8 +9,10 @@
  *  - the DECORATION GATE: the extensions are absent — not merely empty — for
  *    every viewer but `code` and while the ONE setting is switched off,
  *    checked against the real CodeMirror DOM the editor builds;
- *  - the BLAME MEMO: hovering the same line twice asks git once, and a fresh
- *    change set drops the file's memo (nothing is prefetched).
+ *  - the BLAME MEMO: hovering the same line twice asks git once, a fresh
+ *    change set drops the file's memo, and so does a change set that vanishes
+ *    (commit / discard) — nothing is prefetched, and no hover is ever answered
+ *    with a line git blamed before the commit (#212).
  */
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
@@ -283,6 +285,74 @@ describe('TextEditor wiring (code viewer only, one switch)', () => {
   }
 
   const MODIFIED: GitStatusResult = { isRepo: true, root: '/p', entries: [{ path: 'a.ts', xy: ' M' }] }
+
+  /** The scope the mounted editor subscribes to (and the memo is keyed by). */
+  const wiringScope = { sessionId: 's1', cwd: '/p' }
+  /** A second file, so this describe block never shares a memo entry with the
+   *  hover-only cases above (the memo is a module-level singleton). */
+  const COMMITTED = '/p/committed.ts'
+  const MODIFIED_COMMITTED: GitStatusResult = {
+    isRepo: true, root: '/p', entries: [{ path: 'committed.ts', xy: ' M' }],
+  }
+
+  /** Flush the status store's fetch chain: the mocked git answer resolves, the
+   *  slot publishes and the subscribed editor re-renders with the new entry. */
+  async function flushStatus(): Promise<void> {
+    await act(async () => {
+      invalidateGitStatus('s1')
+      for (let round = 0; round < 5; round += 1) await Promise.resolve()
+    })
+  }
+
+  it('never prefetches blame for the mounted code view (hover is the only trigger)', async () => {
+    gitStatus.mockResolvedValue(MODIFIED_COMMITTED)
+    gitDiffHead.mockResolvedValue({ diff: patch('committed.ts', '@@ -1,2 +1,3 @@\n one\n+inserted\n two\n') })
+    const mounted = renderRoot(createElement(TextEditor, viewerProps({ path: COMMITTED })))
+    try {
+      await flushStatus()
+      // The gutter really engaged — the change set was read and its bar is in
+      // the DOM — so the blame count below is not zero for want of a gutter.
+      expect(gitDiffHead).toHaveBeenCalledTimes(1)
+      expect(mounted.container.querySelector(`.${GIT_BAR_GUTTER_CLASS}`)).not.toBeNull()
+      expect(gitBlame).not.toHaveBeenCalled()
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('never answers with the pre-commit blame once the file leaves the change set (#212)', async () => {
+    gitStatus.mockResolvedValue(MODIFIED_COMMITTED)
+    gitDiffHead.mockResolvedValue({ diff: patch('committed.ts', '@@ -1,2 +1,3 @@\n one\n+inserted\n two\n') })
+    // What git blames a modified worktree line BEFORE the commit: the
+    // '[Not Committed Yet]' placeholder, no summary, no real hash.
+    gitBlame.mockResolvedValueOnce({
+      lines: [{ line: 2, hash: '0'.repeat(40), author: 'Not Committed Yet', date: '', summary: '' }],
+    })
+    const mounted = renderRoot(createElement(TextEditor, viewerProps({ path: COMMITTED })))
+    try {
+      await flushStatus()
+      // The hover the tooltip source performs for line 2.
+      const before = await loadBlameLine(wiringScope, COMMITTED, 2)
+      expect(before?.author).toBe('Not Committed Yet')
+      expect(gitBlame).toHaveBeenCalledTimes(1)
+
+      // The user commits (or discards): the status answer stops listing the
+      // file, so the editor's change set for it goes away.
+      gitStatus.mockResolvedValue({ isRepo: true, root: '/p', entries: [] })
+      gitBlame.mockResolvedValue({
+        lines: [{ line: 2, hash: 'a'.repeat(40), author: 'Ada', date: '2026-01-01T10:00:00+08:00', summary: 'feat: committed' }],
+      })
+      await flushStatus()
+
+      // The same line, hovered again. The memo of a CLEARED change set must
+      // not answer with the line git blamed before the commit.
+      const after = await loadBlameLine(wiringScope, COMMITTED, 2)
+      expect(gitBlame).toHaveBeenCalledTimes(2)
+      expect(after?.summary).toBe('feat: committed')
+    } finally {
+      mounted.unmount()
+    }
+  })
 
   it('installs the gutter for the code viewer (default on)', async () => {
     gitStatus.mockResolvedValue(MODIFIED)
