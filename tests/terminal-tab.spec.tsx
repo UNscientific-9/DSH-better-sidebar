@@ -31,7 +31,7 @@ import { renderRoot, setupReactAct } from './test-utils.ts'
 import { t } from '../src/client/locales.ts'
 import type { Context } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
-import { createSidebarStore } from '../src/client/state.ts'
+import { allLeaves, createSidebarStore, openTabInBottomPane } from '../src/client/state.ts'
 import { createBetterSidebarService, type TabDescriptor } from '../src/client/service.ts'
 import { builtinTabs } from '../src/client/builtins/tabs.tsx'
 import {
@@ -477,20 +477,38 @@ describe('terminal-bottom: degradation and recovery', () => {
     unmount()
   })
 
-  it('an ended terminal offers the same new-terminal action, and says so once', async () => {
+  it('an ended terminal owns the only status line, and offers the new-terminal action', async () => {
     const terminals = new FakeTerminals()
     const { ctx } = viewSetup(terminals)
     const { container, unmount } = render(ctx, bottomTab())
     await flush()
     const view = terminals.views.get('s1\u0000' + bottomTerminalKey(0))!
     act(() => {
-      view.patch({ info: { id: view.id, title: 'Terminal', cwd: '/w', cols: 80, rows: 24, state: 'exited', exitCode: 0 } })
+      view.patch({
+        info: { id: view.id, title: 'Terminal', cwd: '/w', cols: 80, rows: 24, state: 'exited', exitCode: 0 },
+        // The phase is what makes this case DISCRIMINATING. A patch that only
+        // flipped `info.state` to `exited` would leave the pending-phase status
+        // line undefined either way (`statusOf` has no line for `connected`),
+        // so the assertion below ("the exited sentence appears once") held with
+        // and without the gate in `TerminalBottomView`. `disconnected` HAS a
+        // line of its own, and the gate is exactly what must stand it — with
+        // its Retry button — down: a process that is gone cannot be reconnected
+        // to, and the reader would get the same terminal described twice.
+        phase: 'disconnected',
+        writable: false,
+      })
     })
-    expect(container.querySelector('button')).not.toBeNull()
-    // The ended panel carries its own line: the pending-phase status line must
-    // stand down, or the reader sees the same sentence twice.
+    // The ended panel carries its own line, exactly once…
     const line = t('exited')
     expect(container.textContent!.split(line).length - 1).toBe(1)
+    // …it is the ONLY status line on screen (the suppressed one was a
+    // `role="status"` div as well)…
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1)
+    // …and the only action is the new terminal: the suppressed line's Retry
+    // button would come FIRST in DOM order.
+    expect([...container.querySelectorAll('button')].map(button => button.textContent))
+      .toEqual([t('terminalNew')])
+    expect(container.textContent).not.toContain(t('disconnected'))
     unmount()
   })
 
@@ -505,6 +523,59 @@ describe('terminal-bottom: degradation and recovery', () => {
     act(() => { action.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(view.connected).toBe(1)
     expect(view.refreshed).toBe(0)
+    unmount()
+  })
+
+  it('the new-terminal action rides the REAL updateTab route (native record first, own layout second)', async () => {
+    // Every other case here stubs `betterSidebar.updateTab`, which is only the
+    // call the view MAKES: the write itself travels
+    // `service.updateTab` → `surface.update` → `store.reduce(patchTab)`, and
+    // that route was uncovered. It matters most for this type: a `bottomOnly`
+    // tab never has a native record, so the store reduce is the only path its
+    // "new terminal" can take — with a stub, a broken route would still look
+    // green here and fail only in the browser.
+    const terminals = new FakeTerminals()
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    const ctx = ctxWith({ webTerminals: terminals, betterSidebar: service })
+    // The workbench's own state: the tab IS open. `patchTab` is a documented
+    // no-op for a missing id, so a case that skipped this would assert nothing.
+    store.reduce(state => openTabInBottomPane(state, bottomTab()))
+    const tabInStore = (): SidebarTab | undefined => allLeaves(store.getSnapshot().state!.bottomSplits)
+      .flatMap(leaf => leaf.tabs).find(tab => tab.id === 'terminal-bottom')
+    expect(tabInStore()?.meta).toBeUndefined()
+
+    const { container, unmount } = render(ctx, bottomTab())
+    await flush()
+    const view = terminals.views.get('s1\u0000' + bottomTerminalKey(0))!
+    act(() => { view.patch({ phase: 'failed', writable: false, issue: 'missingTerminal' }) })
+    const action = container.querySelector('button')!
+
+    // ── the native half: an id the native surface owns is patched THERE ────
+    const nativePatches: Array<{ tabId: string; patch: unknown; sessionId: string | undefined }> = []
+    service.setSurface({
+      openTab: () => {},
+      openResource: () => {},
+      fileAddress: () => 'dsh-resource://file/s1/x',
+      close: () => undefined,
+      update: (tabId, patch, sessionId) => {
+        nativePatches.push({ tabId, patch, sessionId })
+        return true
+      },
+      activate: () => false,
+      has: () => false,
+    })
+    act(() => { action.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(nativePatches).toEqual([
+      { tabId: 'terminal-bottom', patch: { meta: { terminalRun: 1 } }, sessionId: 's1' },
+    ])
+    expect(tabInStore()?.meta, 'a native record owns the patch — the store stays out of it').toBeUndefined()
+
+    // ── the own-layout half: no native record, so the bottom tree takes it ──
+    service.setSurface(undefined)
+    act(() => { action.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(tabInStore()?.meta).toEqual({ terminalRun: 1 })
     unmount()
   })
 })

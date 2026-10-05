@@ -269,7 +269,17 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       // reattach), so closing the TAB is the only thing that ends the process
       // — without it every closed bottom terminal would hold one of the host's
       // per-session terminal slots forever.
-      onClose: (tab, scope) => { closeBottomTerminal(ctx, tab, scope?.sessionId ?? '') },
+      onClose: (tab, scope) => {
+        // Every close path resolves a scope (the type makes it required), so
+        // this guard should be unreachable. It returns instead of substituting
+        // `''` for a missing one because an empty session id is the ONE option
+        // that is worse than doing nothing: the host would look the terminal up
+        // in a session that does not exist, no-op, and leave the shell running
+        // — invisibly holding a per-session terminal slot for the page's life.
+        const sessionId: string | undefined = scope?.sessionId
+        if (sessionId === undefined || sessionId === '') return
+        closeBottomTerminal(ctx, tab, sessionId)
+      },
     },
     {
       id: 'diff',
