@@ -300,7 +300,17 @@ export function GitLens(props: GitLensProps) {
   /** The history's own failure state: an empty list must not claim "no commits"
    *  when the log call failed. */
   const [logFailed, setLogFailed] = useState(false)
-  const [commitMsg, setCommitMsg] = useState('')
+  /** Commit drafts, one per scope: the Commit button asks only for a message
+   *  and a staged row, so a draft typed against another project would submit
+   *  verbatim under this one. Keyed rather than cleared on a scope swap, so a
+   *  kept-mounted tab shows a conversation its own message when it comes back
+   *  (#712). */
+  const [commitDrafts, setCommitDrafts] = useState<Record<string, string>>({})
+  const draftKey = `${scope.sessionId}\u0000${scope.cwd ?? ''}`
+  const commitMsg = commitDrafts[draftKey] ?? ''
+  const writeDraft = (text: string): void => {
+    setCommitDrafts(prev => ({ ...prev, [draftKey]: text }))
+  }
   const [busy, setBusy] = useState(false)
   /** Whether a commit-message suggestion is being generated host-side (the
    *  host streams the diff through the harness LLM — no agent is spawned). */
@@ -418,12 +428,6 @@ export function GitLens(props: GitLensProps) {
     setLogLoadingMore(false)
     setLogFailed(false)
     setActionError(null)
-    // The commit draft belongs to the checkout it was typed against: the
-    // Commit button only asks for a message and a staged row, so a draft left
-    // over from another scope/checkout commits verbatim under the new one —
-    // with no second confirmation. Cleared here rather than at the call sites
-    // so the scope swap and the checkout/repo pickers all get it.
-    setCommitMsg('')
   }
 
   /** Load the branch choices and the first history page of one checkout. */
@@ -619,7 +623,7 @@ export function GitLens(props: GitLensProps) {
     void runAction(
       () => api.gitCommit(gitScopeNow(), message, selectedWorktree),
       errorMessage,
-      () => { setCommitMsg('') },
+      () => { writeDraft('') },
     ).finally(() => { setCommitting(false) })
   }
 
@@ -637,7 +641,7 @@ export function GitLens(props: GitLensProps) {
     setActionError(null)
     try {
       const { message } = await api.gitSuggestMessage(gitScopeNow(), isZh() ? 'zh' : 'en', selectedWorktree)
-      setCommitMsg(message)
+      writeDraft(message)
     } catch (reason) {
       if (reason instanceof SidebarApiError && reason.code === 'git-suggest-empty') {
         setActionError(t('suggestCommitEmpty'))
@@ -998,7 +1002,7 @@ export function GitLens(props: GitLensProps) {
                 aria-busy={busy || suggesting}
                 aria-label={t('commitPlaceholder')}
                 rows={1}
-                onChange={(event) => { setCommitMsg(event.currentTarget.value); setActionError(null) }}
+                onChange={(event) => { writeDraft(event.currentTarget.value); setActionError(null) }}
                 onKeyDown={(event) => {
                   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') commit()
                   // Ctrl/Cmd+G drafts the message, mirroring the button (the

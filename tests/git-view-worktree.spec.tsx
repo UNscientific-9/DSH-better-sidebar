@@ -735,18 +735,18 @@ describe('GitLens (changes tab, git lens) scope swap', () => {
     }
   })
 
-  it('drops a half-typed commit message when the scope changes', async () => {
+  it('does not carry a half-typed commit message into the next scope', async () => {
     // The Commit button asks only for a non-empty message and a staged row, so
-    // a draft typed against the previous project would commit verbatim under
-    // the new one — no confirmation in between. Asserted through the button's
-    // disabled state, which is driven by the state itself; the input's DOM
-    // value cannot be trusted here, because writing it through the native
-    // setter leaves React's value tracker behind.
+    // a draft typed against the previous project would submit verbatim under
+    // the new one — no confirmation in between. Driven through the submit
+    // itself rather than the button's disabled state: what has to hold is that
+    // the message is ABSENT, not merely that a gate is shut.
+    const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes: 1 }])
     vi.spyOn(api, 'gitStatus').mockResolvedValue({
       isRepo: true,
       branch: 'main',
-      // 'M ' is a STAGED row: the Commit button needs one to be enabled at all.
+      // 'M ' is a STAGED row: the commit path needs one to be reachable at all.
       entries: [{ path: 'staged.ts', xy: 'M ' }],
     })
     vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
@@ -756,34 +756,46 @@ describe('GitLens (changes tab, git lens) scope swap', () => {
     vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
 
     const { container, root } = makeRoot()
+    // Re-queried on every use: a re-render may hand back a different node, and
+    // a detached one keeps whatever its last render set.
+    const box = (): HTMLTextAreaElement | null =>
+      container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
+    const typeInto = async (text: string): Promise<void> => {
+      await act(async () => {
+        const node = box()
+        if (node === null) throw new Error('commit box not found')
+        // Native setter: a plain `node.value =` leaves React's tracker behind.
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(node, text)
+        node.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    const submit = async (): Promise<void> => {
+      await act(async () => {
+        box()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+      })
+      await act(async () => { await Promise.resolve() })
+    }
     try {
       mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
       await flushEffects()
-      const input = [...container.querySelectorAll<HTMLInputElement>('input')]
-        .find(el => el.placeholder === t('commitPlaceholder'))
-      if (input === undefined) throw new Error('commit input not found')
-      const commitButton = [...container.querySelectorAll<HTMLButtonElement>('button')]
-        .find(el => el.textContent?.trim() === t('commit'))
-      if (commitButton === undefined) throw new Error('commit button not found')
-      // A staged row alone leaves the button disabled: the message is required.
-      expect(commitButton.disabled).toBe(true)
+      await typeInto('fix: half typed in A')
 
-      act(() => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'fix: half typed in A')
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-      })
-      expect(commitButton.disabled).toBe(false)
-
-      // Another session takes over the same mounted instance.
+      // Another session takes over the same mounted instance. The draft stays
+      // behind with the project it was written for, so this submit finds no
+      // message to send.
       mountGit(root, { scope: { sessionId: 's2', cwd: AGENT } })
       await flushEffects()
+      await submit()
+      expect(commit).not.toHaveBeenCalled()
 
-      // The draft is gone, so the message half of the gate is unsatisfied again.
-      // Re-queried: a re-render may hand back a different node, and a detached
-      // one keeps whatever its last render set.
-      const afterSwap = [...container.querySelectorAll<HTMLButtonElement>('button')]
-        .find(el => el.textContent?.trim() === t('commit'))
-      expect(afterSwap?.disabled).toBe(true)
+      // Coming back to that project brings its own message back: the draft is
+      // the state a kept-mounted tab holds on #712's behalf.
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+      await submit()
+      expect(commit).toHaveBeenCalledTimes(1)
+      expect(commit.mock.calls[0]?.[0]?.sessionId).toBe('s1')
+      expect(commit.mock.calls[0]?.[1]).toBe('fix: half typed in A')
     } finally {
       act(() => { root.unmount() })
       container.remove()
