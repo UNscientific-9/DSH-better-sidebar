@@ -648,26 +648,26 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.screenshot({ path: 'test-results/mount-final.png' })
 })
 
-test('conservative auto: URL stamps alone never modify the layout; plugin chrome carries the stable data attributes', async ({ page }) => {
+test('a shell-stamped render URL mounts normally; plugin chrome carries the stable data attributes', async ({ page }) => {
   // The official DSH Desktop shell stamps every render URL with
-  // dsh-desktop-mode / dsh-desktop-platform. Under the conservative AUTO
-  // scheme, shell stamps are REPORTS, not geometry: without the standard
-  // Window Controls Overlay API the layout must stay untouched (plain-web
-  // semantics) — the strip/body attribute appear only for real standard
-  // geometry (see the WCO scenario below) or an opt-in preset.
+  // dsh-desktop-mode / dsh-desktop-platform. Those stamps used to drive the
+  // title-bar strip mechanism, which is GONE (the plugin paints no top chrome
+  // and no rule ever read the strip it published): the stamps are now inert
+  // environment reports, and this scenario pins exactly that — a stamped page
+  // mounts the plugin untouched.
   await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
   await expect(
     page.locator('body[data-dsh-title-bar-compat]'),
-    'stamps alone must NOT auto-enable title-bar compatibility under auto',
+    'nothing may write the retired title-bar attributes any more',
   ).toHaveCount(0)
   await expect
     .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
     .toBe('')
-  // The stable addressing surface for presets / custom CSS is mounted: the
-  // plugin's own host (its bottom workbench and the header toggle live in
-  // DSH's session header, which this stamp-only page has no session for —
-  // the native-surface sweep asserts those once a session exists).
+  // The stable addressing surface for custom CSS is mounted: the plugin's own
+  // host (its bottom workbench and the header toggle live in DSH's session
+  // header, which this stamp-only page has no session for — the
+  // native-surface sweep asserts those once a session exists).
   await expect(page.locator('[data-dsh-panel-host]')).toBeAttached()
   // The plugin's interactive chrome opts out of Electron drag regions
   // (issues #103/#111) — inert in plain browsers, present in the bundle
@@ -736,79 +736,11 @@ test('conservative auto: URL stamps alone never modify the layout; plugin chrome
   expect(regions.layerChild, 'panels stay no-drag so their controls keep receiving clicks').toBe('no-drag')
 })
 
-test('standard WCO geometry drives the strip reactively (issue #257)', async ({ page }) => {
-  // The Window Controls Overlay API is the STANDARD signal for shells that
-  // draw the native caption buttons over web content (Electron
-  // `titleBarOverlay`). Mock it with the real API shape: the strip must
-  // follow the reported rect and react to geometrychange (maximize/restore).
-  await page.addInitScript(() => {
-    const rect = { x: 0, y: 0, width: 138, height: 36 }
-    const listeners = new Set<() => void>()
-    Object.defineProperty(navigator, 'windowControlsOverlay', {
-      configurable: true,
-      value: {
-        visible: true,
-        getTitlebarAreaRect: () => ({ ...rect }),
-        addEventListener: (type: string, listener: () => void) => { if (type === 'geometrychange') listeners.add(listener) },
-        removeEventListener: (type: string, listener: () => void) => { if (type === 'geometrychange') listeners.delete(listener) },
-      },
-    })
-    ;(globalThis as { __wcoMock?: { setHeight: (height: number) => void } }).__wcoMock = {
-      setHeight: (height: number) => {
-        rect.height = height
-        for (const listener of listeners) listener()
-      },
-    }
-  })
-  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
-  // Real reported height (36px, not a hardcoded 32) drives the strip.
-  await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
-    .toBe('36px')
-  // Maximize → the overlay reports a zero rect → the strip is removed.
-  await page.evaluate(() => (globalThis as { __wcoMock?: { setHeight: (height: number) => void } }).__wcoMock?.setHeight(0))
-  await expect(page.locator('body[data-dsh-title-bar-compat]')).toHaveCount(0)
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
-    .toBe('')
-  // Restore → the strip comes back.
-  await page.evaluate(() => (globalThis as { __wcoMock?: { setHeight: (height: number) => void } }).__wcoMock?.setHeight(36))
-  await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached()
-})
-
-test('opt-in shell preset applies its strip when WCO is absent (data-driven, manual)', async ({ request, page }) => {
-  // The anywhere-labs DSH Desktop preset (shell-presets.ts) is OPT-IN: under
-  // the preset scheme the win32 advanced stamp resolves to its 32px fallback
-  // even without the WCO API; auto never does this.
+test('the custom-CSS escape hatch injects the user stylesheet live', async ({ request, page }) => {
+  // The one setting the removed scheme row really owned: user-space CSS. It
+  // has no scheme gate any more — a non-empty customCss is always applied.
   const update = await request.post(sidebarApi('settings.update'), {
-    data: { patch: { titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', titleBarCompat: true } },
-  })
-  expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
-  try {
-    await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
-    await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
-    await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
-    await expect
-      .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
-      .toBe('32px')
-    // The v1 anywhere-labs preset is PURE STRIP DATA (no extra CSS — the
-    // injection mechanism is exercised by the custom-scheme test). Assert
-    // the absence explicitly: a future preset that ADDS css would trip
-    // here instead of silently shipping unstyled.
-    await expect(page.locator('style[data-dsh-preset-css]')).toHaveCount(0)
-  } finally {
-    // Restore the shared server state for the lanes after this one.
-    await request.post(sidebarApi('settings.update'), {
-      data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
-    })
-  }
-})
-
-test('custom scheme injects the user stylesheet live', async ({ request, page }) => {
-  const update = await request.post(sidebarApi('settings.update'), {
-    data: { patch: { titleBarScheme: 'custom', customCss: 'html { --dsh-e2e-marker: 1; }', titleBarCompat: true } },
+    data: { patch: { customCss: 'html { --dsh-e2e-marker: 1; }' } },
   })
   expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
   try {
@@ -819,8 +751,6 @@ test('custom scheme injects the user stylesheet live', async ({ request, page })
     const marker = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--dsh-e2e-marker').trim())
     expect(marker).toBe('1')
   } finally {
-    await request.post(sidebarApi('settings.update'), {
-      data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
-    })
+    await request.post(sidebarApi('settings.update'), { data: { patch: { customCss: '' } } })
   }
 })

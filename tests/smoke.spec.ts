@@ -1286,10 +1286,7 @@ describe('side card settings routes', () => {
       autoOpenJobs: true,
       agentOpenTools: false,
       editorExplorer: false,
-      // These title-bar fields are declared without a schema default on
-      // purpose, so a document predating them migrates rather than flips.
-      titleBarCompat: false,
-      titleBarStripPx: 40,
+      customCss: '',
       htmlViewerNoSandbox: false,
       htmlViewerDefaultUnsafe: false,
       // The enable-switch maps default to {} (everything on).
@@ -1298,12 +1295,16 @@ describe('side card settings routes', () => {
       // The plugin-owned settings map defaults to {} too.
       pluginSettings: {},
     })
+    // The retired title-bar keys are no longer part of the form at all.
+    for (const retired of ['titleBarScheme', 'titleBarPresetId', 'titleBarCompat', 'titleBarStripPx']) {
+      expect(view.value).not.toHaveProperty(retired)
+    }
 
     const written = await invoke(route, 'settings.update', { patch: { agentOpenTools: true } })
     expect(written.ok).toBe(true)
-    const after = written.value as { value: { agentOpenTools: boolean; titleBarStripPx: number }; revision: number }
+    const after = written.value as { value: { agentOpenTools: boolean; customCss: string }; revision: number }
     expect(after.value.agentOpenTools).toBe(true)
-    expect(after.value.titleBarStripPx).toBe(40)
+    expect(after.value.customCss).toBe('')
     expect(after.revision).toBe(1)
   })
 
@@ -1312,12 +1313,15 @@ describe('side card settings routes', () => {
     // DSH renames the retired document to `.imported` before importing any
     // section, and it re-imports by SAME id — this section is keyed by the
     // package name, which never matches the row id, so it is left behind. The
-    // unknown fields are the ones this release no longer declares; forwarding
-    // them would reject the whole patch and lose the preferences.
+    // unknown fields are the ones this release no longer declares (the
+    // title-bar keys joined that set when the whole strip mechanism was
+    // removed); forwarding them would reject the whole patch and lose the
+    // preferences.
     writeFileSync(join(home, 'settings.yaml.imported'), [
       'dsh-better-sidebar:',
       '  agentOpenTools: true',
       '  titleBarStripPx: 22',
+      '  titleBarScheme: custom',
       '  terminalFontSize: 13',
       '  browserInterceptHttp: false',
       'other-plugin:',
@@ -1331,7 +1335,12 @@ describe('side card settings routes', () => {
       // let its read and microtasks settle before asserting.
       await new Promise(resolve => setTimeout(resolve, 100))
       const row = settings.describe().find(candidate => candidate.ns === ENTRY_ID)
-      expect(row?.value).toMatchObject({ agentOpenTools: true, titleBarStripPx: 22 })
+      // The declared field comes across; every retired key is dropped rather
+      // than forwarded (a forwarded unknown key is what would reject the
+      // patch and lose the whole section).
+      expect(row?.value).toMatchObject({ agentOpenTools: true })
+      expect(row?.value).not.toHaveProperty('titleBarStripPx')
+      expect(row?.value).not.toHaveProperty('titleBarScheme')
       expect(row?.value).not.toHaveProperty('terminalFontSize')
       expect(row?.value).not.toHaveProperty('browserInterceptHttp')
       expect(row?.revision).toBe(1)
@@ -1393,7 +1402,7 @@ describe('side card settings routes', () => {
     await invoke(route, 'settings.update', { patch: { agentOpenTools: false } })
     // The second write carries the pre-write revision: the seam refuses it.
     const stale = await invoke(route, 'settings.update', {
-      patch: { titleBarStripPx: 15 },
+      patch: { agentOpenTools: true },
       expectedRevision: 0,
     })
     expect(stale.ok).toBe(false)

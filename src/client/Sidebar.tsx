@@ -42,10 +42,6 @@ import { IconPanelBottomOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
-import { parseDesktopEnv, probeDesktopWindow } from './desktop-env.ts'
-import { getWcoSnapshot, subscribeWco } from './wco.ts'
-import { getShellPreset } from './shell-presets.ts'
-import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
 import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
 import { createOpenInApp } from './open-in-app.ts'
@@ -241,67 +237,28 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     return () => { window.removeEventListener('beforeunload', onBeforeUnload) }
   }, [dirtyRevision])
 
-  // Title-bar / shell compatibility (the "位置兼容模式" scheme):
-  //   auto    — CONSERVATIVE: the desktop shell's own window contract when it
-  //             publishes one, otherwise only the standard Window Controls
-  //             Overlay geometry contributes (the real caption-overlay
-  //             height, reactive to maximize/restore). No URL stamp, no
-  //             preset, no guess — plain browsers see zero modification.
-  //   preset  — an opt-in built-in shell preset (shell-presets.ts) adds its
-  //             per-shell strip as the no-WCO fallback.
-  //   custom  — the user's own CSS (injected below) + the legacy manual
-  //             strip px.
-  // The resolved strip drives the SAME body attribute + CSS variable as the
-  // legacy boolean did, so the CSS contract is unchanged (layout.css /
-  // sidebar.module.css); only the value source changed. The cleanup removes
-  // both on unmount/boundary swap so a crashed sidebar never leaves them
-  // behind.
-  const desktopEnv = parseDesktopEnv()
-  // The shell's own geometry contract (absent on a plain browser page and on
-  // shells that only stamp the URL — see desktop-env.ts). Probed per render:
-  // it is a plain read of an immutable service, and the sidebar re-renders on
-  // every session / prefs / viewport change anyway.
-  const desktopWindow = probeDesktopWindow(ctx)
-  const wco = useSyncExternalStore(
-    useMemo(() => subscribeWco, []),
-    getWcoSnapshot,
-  )
-  const scheme = snapshot.prefs.titleBarScheme
-  const preset = scheme === 'preset' ? getShellPreset(snapshot.prefs.titleBarPresetId) : undefined
-  const titleBarStrip = computeTitleBarStrip(
-    desktopEnv, wco, scheme, preset, snapshot.prefs.titleBarStripPx, desktopWindow,
-  )
-  const titleBarCompat = titleBarStrip > 0
-  useEffect(() => {
-    const root = document.documentElement
-    if (titleBarCompat) {
-      document.body.setAttribute('data-dsh-title-bar-compat', '')
-      root.style.setProperty('--dsh-title-bar-strip', `${titleBarStrip}px`)
-    } else {
-      document.body.removeAttribute('data-dsh-title-bar-compat')
-      root.style.removeProperty('--dsh-title-bar-strip')
-    }
-    return () => {
-      document.body.removeAttribute('data-dsh-title-bar-compat')
-      root.style.removeProperty('--dsh-title-bar-strip')
-    }
-  }, [titleBarCompat, titleBarStrip])
+  // Title-bar / shell compatibility (the "位置兼容模式" scheme) used to be
+  // resolved here: a strip height computed from the shell's own window
+  // contract, the standard Window Controls Overlay geometry, the URL stamps,
+  // an opt-in shell preset or a manual px, published as
+  // `--dsh-title-bar-strip` + `body[data-dsh-title-bar-compat]`. The plugin
+  // draws no top chrome (v0.19.0 handed that back to the host) and no rule has
+  // read either the variable or the attribute since, so the whole mechanism —
+  // and with it this shell's only reason to read the desktop environment —
+  // was removed. See docs/plans/2026-10-05-remove-titlebar-compat-strip.md.
 
-  // User-space CSS injection (the escape hatch): preset CSS (scheme
-  // `preset`) and free-form custom CSS (scheme `custom`) are appended AFTER
-  // the plugin's own styles — later in the cascade wins ties, and
-  // `!important` can override the JS-written inline strip variable. Each
-  // source gets its own tagged <style> so the running configuration stays
-  // inspectable; tags are removed on change/unmount so a stale stylesheet
-  // never outlives its fiber (HMR-safe).
-  const presetCss = scheme === 'preset' ? preset?.css ?? '' : ''
-  const customCss = scheme === 'custom' ? snapshot.prefs.customCss : ''
+  // User-space CSS injection (the escape hatch): the free-form custom CSS is
+  // appended AFTER the plugin's own styles — later in the cascade wins ties,
+  // and `!important` can override the plugin's declarations. It gets its own
+  // tagged <style> so the running configuration stays inspectable; the tag is
+  // removed on change/unmount so a stale stylesheet never outlives its fiber
+  // (HMR-safe).
+  const customCss = snapshot.prefs.customCss
   useEffect(() => {
     const tags: HTMLStyleElement[] = []
-    if (presetCss !== '') tags.push(injectUserCss('data-dsh-preset-css', preset?.id ?? '', presetCss))
     if (customCss !== '') tags.push(injectUserCss('data-dsh-custom-css', 'custom', customCss))
     return () => { for (const tag of tags) tag.remove() }
-  }, [presetCss, customCss, preset?.id])
+  }, [customCss])
 
   // The live root shared by both client surfaces: the host follows the
   // session's active linked git worktree, the list summary only seeds first paint.
