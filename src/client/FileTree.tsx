@@ -336,7 +336,11 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
       style={{ paddingLeft: depth * 22 + 6 }}
       // A folded row renders the whole chain (`a/b/c`) and a plain click
       // toggles every link at once, so the breadcrumb opens and closes as one.
-      title={chain.length > 1 ? target.path : undefined}
+      // EVERY directory row carries its full path here — a single-segment row
+      // is truncated by the label's ellipsis exactly like the breadcrumb, and
+      // the body never scrolls horizontally, so the tooltip is the only way to
+      // read a deep path (the same affordance `FileRow` gives a file).
+      title={target.path}
       onClick={(event) => { actions.activate(event, entry.path, true, chain) }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -398,6 +402,9 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
     <div
       className={clsx(css.explorerRow, dropTarget && css.explorerRowDropTarget)}
       style={{ paddingLeft: 6 }}
+      // The root row prints only the workspace folder's BASENAME, so it needs
+      // the full path on hover like every other row.
+      title={path}
       onDragOver={(event) => { actions.dragOver(event, path) }}
       onDrop={(event) => { actions.drop(event, path, true) }}
       onContextMenu={(event) => { actions.contextMenu(event, path, true) }}

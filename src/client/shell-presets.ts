@@ -24,8 +24,9 @@ export interface ShellPreset {
   readonly desc: string | (() => string)
   /**
    * The top strip (px) this shell reserves over web content, per
-   * environment — the fallback used when neither the standard WCO API nor
-   * the `dsh-desktop-titlebar-inset` contract parameter is available.
+   * environment — the fallback used when neither the shell's own
+   * `ctx.desktopWindow` contract, nor the standard WCO API, nor the
+   * `dsh-desktop-titlebar-inset` contract parameter is available.
    * Return undefined when the shell needs no strip in that environment.
    * MUST be pure (called during render).
    */
@@ -51,13 +52,19 @@ export interface ShellPreset {
  * a 20px caption row (traffic lights top-left), win32 draws the native
  * window controls in a ~32px overlay (WCO reports the real height when
  * available, which the auto scheme already consumes; the 32 is the
- * no-WCO fallback). Compatibility mode keeps the native frame — nothing.
+ * no-WCO fallback). Compatibility and extended modes keep the shell's own
+ * frame ABOVE the web content — the shell has already pushed the page below
+ * it (and, on shells new enough to publish `ctx.desktopWindow`, reports
+ * `safeAreaInsets.top = 0`), so nothing is due here: the
+ * `env.mode !== 'advanced'` guard below is what keeps an extended shell from
+ * inheriting advanced's caption-row value.
  */
 const DSH_DESKTOP: ShellPreset = {
   id: 'dsh-desktop',
   title: 'DeepSeek Harness Desktop',
   desc: () => t('presetDshDesktopDesc'),
   stripFor: (env) => {
+    // Advanced only — compatibility / extended own the region themselves.
     if (env.mode !== 'advanced') return undefined
     if (env.platform === 'darwin') return 20
     if (env.platform === 'win32') return 32

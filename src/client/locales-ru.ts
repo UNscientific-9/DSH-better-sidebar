@@ -114,6 +114,8 @@ export const ru: Record<string, string> = {
   closeOtherTabs: 'Закрыть остальные вкладки',
   closeLeftTabs: 'Закрыть вкладки слева',
   closeRightTabs: 'Закрыть вкладки справа',
+  closeAllTabs: 'Закрыть все вкладки',
+  revealTabInFileManager: 'Показать файл в файловом менеджере',
   pinTerminal: 'Закрепить терминал',
   pinAgentTerminal: 'Закрепить терминал Agent',
   pinToWorkspace: 'Закрепить в рабочей области',

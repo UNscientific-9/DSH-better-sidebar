@@ -111,6 +111,8 @@ export const fr: Record<string, string> = {
   closeOtherTabs: 'Fermer les autres onglets',
   closeLeftTabs: 'Fermer les onglets à gauche',
   closeRightTabs: 'Fermer les onglets à droite',
+  closeAllTabs: 'Fermer tous les onglets',
+  revealTabInFileManager: 'Afficher le fichier dans le gestionnaire de fichiers',
   pinTerminal: 'Épingler le terminal',
   pinAgentTerminal: 'Épingler le terminal Agent',
   pinToWorkspace: 'Épingler à l\'espace de travail',

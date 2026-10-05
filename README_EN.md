@@ -255,7 +255,7 @@ WeChat / QQ group QR codes will live here. After uploading the QR images (drag t
 | Select next occurrence | `Ctrl/Cmd + D` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
-| Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
+| Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right / Close All Tabs (all scoped to the current pane); Reveal in File Manager (for a tab that has a file) |
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |

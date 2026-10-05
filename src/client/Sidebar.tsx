@@ -41,12 +41,13 @@ import { IconPanelBottomOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
 import { bottomPushHeight } from './layout-push.ts'
-import { parseDesktopEnv } from './desktop-env.ts'
+import { parseDesktopEnv, probeDesktopWindow } from './desktop-env.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
 import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
+import { createOpenInApp } from './open-in-app.ts'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
@@ -240,10 +241,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [dirtyRevision])
 
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
-  //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
-  //             geometry contributes (the real caption-overlay height,
-  //             reactive to maximize/restore). No URL stamp, no preset, no
-  //             guess — plain browsers see zero modification.
+  //   auto    — CONSERVATIVE: the desktop shell's own window contract when it
+  //             publishes one, otherwise only the standard Window Controls
+  //             Overlay geometry contributes (the real caption-overlay
+  //             height, reactive to maximize/restore). No URL stamp, no
+  //             preset, no guess — plain browsers see zero modification.
   //   preset  — an opt-in built-in shell preset (shell-presets.ts) adds its
   //             per-shell strip as the no-WCO fallback.
   //   custom  — the user's own CSS (injected below) + the legacy manual
@@ -254,6 +256,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // both on unmount/boundary swap so a crashed sidebar never leaves them
   // behind.
   const desktopEnv = parseDesktopEnv()
+  // The shell's own geometry contract (absent on a plain browser page and on
+  // shells that only stamp the URL — see desktop-env.ts). Probed per render:
+  // it is a plain read of an immutable service, and the sidebar re-renders on
+  // every session / prefs / viewport change anyway.
+  const desktopWindow = probeDesktopWindow(ctx)
   const wco = useSyncExternalStore(
     useMemo(() => subscribeWco, []),
     getWcoSnapshot,
@@ -261,7 +268,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const scheme = snapshot.prefs.titleBarScheme
   const preset = scheme === 'preset' ? getShellPreset(snapshot.prefs.titleBarPresetId) : undefined
   const titleBarStrip = computeTitleBarStrip(
-    desktopEnv, wco, scheme, preset, snapshot.prefs.titleBarStripPx,
+    desktopEnv, wco, scheme, preset, snapshot.prefs.titleBarStripPx, desktopWindow,
   )
   const titleBarCompat = titleBarStrip > 0
   useEffect(() => {
@@ -569,6 +576,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     referenceInChatShared(ctx, sessionId, path, isDir)
   }, [ctx, sessionId])
 
+  /**
+   * The tab context menu's "reveal in the file manager" row. The host's
+   * open-in-app capability is the ONLY path this plugin reveals through
+   * (`ctx.remote.session.openWorkspacePath({action:'reveal'})`, shared with
+   * the explorer's own reveal row via `createOpenInApp`); a deployment
+   * without a desktop (plain web) answers false, which is logged and
+   * otherwise a no-op — the bottom panel has no error strip to write to, and
+   * a failed reveal must never take the strip down. Defined above the
+   * no-session early return — a hook must never sit behind a conditional
+   * return (React counts hooks per render).
+   */
+  const openInApp = useMemo(() => createOpenInApp(ctx), [ctx])
+  const revealTabFile = useCallback((path: string): void => {
+    void openInApp.reveal(path).then((ok) => {
+      if (!ok) console.error(`[dsh-better-sidebar] reveal in file manager failed: ${path}`)
+    }).catch((error: unknown) => {
+      console.error('[dsh-better-sidebar] reveal in file manager error:', error)
+    })
+  }, [openInApp])
+
   if (state === undefined || sessionId === undefined) {
     // No conversation yet: the host stays mounted (the drag shield keeps
     // covering the region) but nothing is rendered — the toggle button lives
@@ -769,6 +796,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
             getTabRightActions={tabRightActionsOf}
+            onRevealInFileManager={revealTabFile}
           />
         </div>
       </div>

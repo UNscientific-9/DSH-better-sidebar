@@ -101,6 +101,8 @@ export const sv: Record<string, string> = {
   closeOtherTabs: 'Stäng andra flikar',
   closeLeftTabs: 'Stäng flikar till vänster',
   closeRightTabs: 'Stäng flikar till höger',
+  closeAllTabs: 'Stäng alla flikar',
+  revealTabInFileManager: 'Visa filen i filhanteraren',
   pinTerminal: 'Fäst Terminal',
   pinAgentTerminal: 'Fäst Agent-terminal',
   pinToWorkspace: 'Fäst på arbetsyta',

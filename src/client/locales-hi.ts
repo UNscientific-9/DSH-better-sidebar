@@ -118,6 +118,8 @@ export const hi: Record<string, string> = {
   closeOtherTabs: 'अन्य टैब बंद करें',
   closeLeftTabs: 'बाएँ टैब बंद करें',
   closeRightTabs: 'दाएँ टैब बंद करें',
+  closeAllTabs: 'सभी टैब बंद करें',
+  revealTabInFileManager: 'फ़ाइल को फ़ाइल मैनेजर में दिखाएँ',
   pinTerminal: 'टर्मिनल पिन करें',
   pinAgentTerminal: 'Agent टर्मिनल पिन करें',
   pinToWorkspace: 'वर्कस्पेस पर पिन करें',

@@ -148,8 +148,13 @@ function LeafView(props: {
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
   getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  /**
+   * Reveal a tab's file in the OS file manager (the tab context menu's
+   * reveal row; see TabBar). Absent → that row stays disabled.
+   */
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions, onRevealInFileManager } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
@@ -206,6 +211,7 @@ function LeafView(props: {
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
         getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
         onDropTab={(payload, before) => {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
@@ -246,8 +252,9 @@ function NodeView(props: {
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
   getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions, onRevealInFileManager } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -259,6 +266,7 @@ function NodeView(props: {
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
         getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
       />
     )
   }
@@ -287,6 +295,7 @@ function NodeView(props: {
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
               getTabRightActions={getTabRightActions}
+              onRevealInFileManager={onRevealInFileManager}
             />
           </div>
         </Fragment>
@@ -309,8 +318,11 @@ export function Workbench(props: {
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
   getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  /** Reveal a tab's file in the OS file manager (see TabBar); absent → the
+   *  tab context menu's reveal row is disabled. */
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions, onRevealInFileManager } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -323,6 +335,7 @@ export function Workbench(props: {
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
         getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
       />
     </div>
   )

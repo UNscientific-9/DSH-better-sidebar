@@ -109,6 +109,8 @@ export const it: Record<string, string> = {
   closeOtherTabs: 'Chiudi le altre schede',
   closeLeftTabs: 'Chiudi le schede a sinistra',
   closeRightTabs: 'Chiudi le schede a destra',
+  closeAllTabs: 'Chiudi tutte le schede',
+  revealTabInFileManager: 'Mostra il file nel gestore file',
   pinTerminal: 'Blocca Terminale',
   pinAgentTerminal: 'Blocca Terminale Agent',
   pinToWorkspace: 'Blocca in Workspace',
