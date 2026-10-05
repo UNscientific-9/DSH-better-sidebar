@@ -110,6 +110,7 @@ export const th: Record<string, string> = {
   gitStatusConflict: 'มีความขัดแย้ง',
   changesClean: 'ไม่มีการเปลี่ยนแปลงในเวิร์กสเปซ',
   changesNoHistory: 'ยังไม่มีประวัติการ commit',
+  changesNewFile: 'ไฟล์ใหม่',
   changesStageFailed: 'stage ไม่สำเร็จ: {message}',
   changesOpGone: 'การดำเนินการนี้ไม่อยู่ในบันทึกเซสชันแล้ว',
   newTab: 'Tab ใหม่',

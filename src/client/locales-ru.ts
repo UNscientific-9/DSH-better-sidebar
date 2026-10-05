@@ -106,6 +106,7 @@ export const ru: Record<string, string> = {
   gitStatusConflict: 'Конфликт',
   changesClean: 'В рабочей области нет изменений',
   changesNoHistory: 'Истории коммитов пока нет',
+  changesNewFile: 'Новый файл',
   changesStageFailed: 'Ошибка индексирования: {message}',
   changesOpGone: 'Этой операции больше нет в журнале сессии',
   newTab: 'Новая вкладка',

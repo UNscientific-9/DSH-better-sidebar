@@ -21,7 +21,17 @@ export interface GitStatusEntry {
   path: string
   /** Two-letter index/worktree status (X Y), e.g. 'M ', ' M', 'A ', '??'. */
   xy: string
+  /** How many lines this path gained and lost, index and worktree sides
+   *  SUMMED (both are measured against HEAD). Absent when git has no numstat
+   *  row for the path — an untracked file never gets one — so "no counts" is
+   *  never rendered as a fabricated `0`. */
+  counts?: GitLineCounts
 }
+
+/** One path's line-count summary from `git diff --numstat`. A binary change is
+ *  its own variant because git reports `-`/`-` for it: there ARE no counts, and
+ *  saying `+0 −0` would invent a number. */
+export type GitLineCounts = { additions: number; deletions: number } | { binary: true }
 
 /** The source-control panel snapshot. */
 export interface GitStatusResult {
@@ -93,6 +103,81 @@ export function parsePorcelainZ(output: string): GitStatusEntry[] {
     }
   }
   return entries
+}
+
+/**
+ * Resolve one `--numstat` path field to the path the file has NOW: the plain
+ * (`old => new`) and brace (`src/{a => b}/x.ts`) rename notations both fold
+ * into the new name, and anything else passes through verbatim.
+ *
+ * Only the LINE-framed output needs this: in `-z` framing git writes the two
+ * names as separate NUL fields, so a path is never folded into rename notation
+ * there — a file literally named `a => b.txt` keeps its own name.
+ */
+function resolveNumstatPath(path: string): string {
+  const arrow = path.indexOf(' => ')
+  if (arrow === -1) return path
+  const open = path.indexOf('{')
+  if (open !== -1 && open < arrow) {
+    const close = path.indexOf('}', arrow + 4)
+    if (close !== -1) return `${path.slice(0, open)}${path.slice(arrow + 4, close)}${path.slice(close + 1)}`
+  }
+  return path.slice(arrow + 4)
+}
+
+/**
+ * Parse one `git diff --numstat` answer into a path → line-counts map. Both
+ * framings are accepted: the production `-z` one (records NUL-framed, so paths
+ * with newlines or quotes stay lossless) and the plain line-framed one.
+ *
+ * Three record shapes exist:
+ *  - `2\t0\tpath` — an ordinary change,
+ *  - `-\t-\tpath` — a binary change: no counts exist, so it maps to the binary
+ *    variant rather than to `0 0`,
+ *  - renames — the path field is the pair `old => new` (or the brace form
+ *    `src/{a => b}/x.ts`) in line framing, and two NUL-framed fields (origin
+ *    first) in `-z` framing.
+ *
+ * A rename is attributed to the NEW path: that is the file as it exists now,
+ * and the exact path `git status --porcelain` reports for the same change, so
+ * the counts land on the row the panel renders.
+ */
+export function parseNumstat(output: string): Map<string, GitLineCounts> {
+  const counts = new Map<string, GitLineCounts>()
+  const framed = output.includes('\0')
+  const records = output.split(framed ? '\0' : '\n')
+  let index = 0
+  while (index < records.length) {
+    const record = records[index]!
+    index += 1
+    if (record === '') continue
+    const addedEnd = record.indexOf('\t')
+    const deletedEnd = addedEnd === -1 ? -1 : record.indexOf('\t', addedEnd + 1)
+    // Not a numstat record (a stray line, or a truncated answer).
+    if (deletedEnd === -1) continue
+    const added = record.slice(0, addedEnd)
+    const deleted = record.slice(addedEnd + 1, deletedEnd)
+    let path = record.slice(deletedEnd + 1)
+    if (framed && path === '') {
+      // A rename: the origin and the new name are the next two NUL fields.
+      const renamed = records[index + 1]
+      index += 2
+      if (renamed === undefined) continue
+      path = renamed
+    } else if (!framed) {
+      path = resolveNumstatPath(path)
+    }
+    if (path === '') continue
+    if (added === '-' || deleted === '-') {
+      counts.set(path, { binary: true })
+      continue
+    }
+    const additions = Number(added)
+    const deletions = Number(deleted)
+    if (!Number.isFinite(additions) || !Number.isFinite(deletions)) continue
+    counts.set(path, { additions, deletions })
+  }
+  return counts
 }
 
 /** One raw porcelain worktree record. Prunable checkouts are retained by
@@ -306,24 +391,65 @@ export async function currentBranch(cwd: string): Promise<string> {
 const GIT_STATUS_LIMIT = 2_000
 
 /**
+ * Fold one path's counts from both numstat sides into a running map. A file
+ * changed in the index AND in the worktree is measured on each side against
+ * HEAD, so the two readings ADD UP; a binary reading on either side wins,
+ * because then there is no line count to add.
+ */
+function addLineCounts(into: Map<string, GitLineCounts>, from: Map<string, GitLineCounts>): void {
+  for (const [path, counts] of from) {
+    const previous = into.get(path)
+    if (previous === undefined) {
+      into.set(path, counts)
+      continue
+    }
+    if (!('additions' in previous) || !('additions' in counts)) {
+      into.set(path, { binary: true })
+      continue
+    }
+    into.set(path, {
+      additions: previous.additions + counts.additions,
+      deletions: previous.deletions + counts.deletions,
+    })
+  }
+}
+
+/**
  * Working-tree status (untracked included). `--untracked-files=all` lists
  * the contents of new directories as individual entries, while preserving
  * repository discovery and explicit repository selection for workspace roots.
+ *
+ * The per-path line counts (#131) ride this SAME read: one batch of three git
+ * processes answers status and both numstat sides together, never one process
+ * per file, and callers keep their existing refresh cadence. A numstat failure
+ * costs only the counts (the rows fall back to their count-less rendering) —
+ * the status answer itself must never fail because of it.
  */
 export async function status(cwd: string, selected?: string): Promise<GitStatusResult> {
   const repositories = await repoRoots(cwd)
   if (repositories.length === 0) return { isRepo: false, entries: [], repositories: [] }
   const root = await repoRoot(cwd, selected)
-  const [branch, raw] = await Promise.all([
+  const [branch, raw, unstagedNumstat, stagedNumstat] = await Promise.all([
     currentBranch(root).catch(() => 'HEAD'),
     runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+    runGit(root, ['diff', '--numstat', '-z']).catch(() => ''),
+    runGit(root, ['diff', '--cached', '--numstat', '-z']).catch(() => ''),
   ])
   const parsed = parsePorcelainZ(raw)
+  const lineCounts = new Map<string, GitLineCounts>()
+  addLineCounts(lineCounts, parseNumstat(stagedNumstat))
+  addLineCounts(lineCounts, parseNumstat(unstagedNumstat))
   const truncated = parsed.length > GIT_STATUS_LIMIT
+  const bounded = truncated ? parsed.slice(0, GIT_STATUS_LIMIT) : parsed
   return {
     isRepo: true,
     branch,
-    entries: truncated ? parsed.slice(0, GIT_STATUS_LIMIT) : parsed,
+    // Paths git has no numstat row for (untracked files) keep their entry
+    // untouched: the absence IS the information.
+    entries: bounded.map((entry): GitStatusEntry => {
+      const counts = lineCounts.get(entry.path)
+      return counts === undefined ? entry : { ...entry, counts }
+    }),
     truncated,
     root,
     repositories,

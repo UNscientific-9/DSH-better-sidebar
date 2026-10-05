@@ -93,6 +93,7 @@ export const sv: Record<string, string> = {
   gitStatusConflict: 'Konflikt',
   changesClean: 'Inga ändringar i arbetsytan',
   changesNoHistory: 'Ingen commit-historik ännu',
+  changesNewFile: 'Ny fil',
   changesStageFailed: 'Kunde inte köa: {message}',
   changesOpGone: 'Åtgärden finns inte längre i sessionsloggen',
   newTab: 'Ny flik',

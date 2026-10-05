@@ -196,6 +196,28 @@
 
 .rowName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-primary); }
 
+/* A row's / band's line counts (#131): `+N −M` in the diff pane's own ink (the
+   `.statAdd` / `.statDel` atoms of `diff.module.css`, reused rather than
+   re-coloured here). Tabular figures keep the column from shifting between
+   readings, and the code face matches every other number in the tab. */
+.lineCounts {
+  flex: none;
+  display: inline-flex;
+  gap: 5px;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The stand-ins for "no numbers exist": a binary change and an untracked (new)
+   file. Quiet tertiary ink — they are a state, not a measurement. */
+.lineNote {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
 /* The row action is invisible until its row is hovered or holds focus (a
    keyboard tab lands on it and reveals it). The three-class form outranks the
    kit's own disabled rule, which would otherwise pin every button to a dim but

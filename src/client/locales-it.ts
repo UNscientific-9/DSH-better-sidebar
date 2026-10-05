@@ -101,6 +101,7 @@ export const it: Record<string, string> = {
   gitStatusConflict: 'In conflitto',
   changesClean: 'Nessuna modifica nel workspace',
   changesNoHistory: 'Nessun commit per ora',
+  changesNewFile: 'Nuovo file',
   changesStageFailed: 'Staging non riuscito: {message}',
   changesOpGone: 'Questa operazione non è più nel registro della sessione',
   newTab: 'Nuova scheda',

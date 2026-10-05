@@ -110,6 +110,7 @@ export const hi: Record<string, string> = {
   gitStatusConflict: 'टकराव',
   changesClean: 'वर्कस्पेस में कोई बदलाव नहीं',
   changesNoHistory: 'अभी कोई कमिट इतिहास नहीं',
+  changesNewFile: 'नई फ़ाइल',
   changesStageFailed: 'स्टेज विफल: {message}',
   changesOpGone: 'यह कार्रवाई अब सत्र लॉग में नहीं है',
   newTab: 'नया टैब',

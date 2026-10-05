@@ -108,6 +108,7 @@ export const id: Record<string, string> = {
   gitStatusConflict: 'Konflik',
   changesClean: 'Tidak ada perubahan di workspace',
   changesNoHistory: 'Belum ada riwayat commit',
+  changesNewFile: 'File baru',
   changesStageFailed: 'Gagal melakukan stage: {message}',
   changesOpGone: 'Operasi ini tidak lagi ada di log sesi',
   newTab: 'Tab baru',

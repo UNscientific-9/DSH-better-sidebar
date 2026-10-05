@@ -54,10 +54,19 @@ export interface FsLevel {
   error?: string
 }
 
+/** One changed path's line-count summary (host git shape, mirroring
+ *  `GitLineCounts` in `src/git.ts`). A binary change is its own variant: git
+ *  reports `-`/`-` for it, so there are no counts to show. */
+export type GitLineCounts = { additions: number; deletions: number } | { binary: true }
+
 /** Git status entry (host git shape). */
 export interface GitStatusEntry {
   path: string
   xy: string
+  /** Lines gained/lost, index and worktree sides summed. ABSENT when git has
+   *  no numstat row for the path — untracked files never have one — so the row
+   *  must not read that absence as `0`. */
+  counts?: GitLineCounts
 }
 
 /** Git status snapshot. */

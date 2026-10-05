@@ -125,6 +125,7 @@ export const zhTW: Record<string, string> = {
   gitStatusConflict: '有衝突',
   changesClean: '工作區沒有變更',
   changesNoHistory: '還沒有提交歷史',
+  changesNewFile: '新檔案',
   changesStageFailed: '暫存失敗：{message}',
   changesOpGone: '此操作已不在作業階段記錄中',
   newTab: '新增標籤',

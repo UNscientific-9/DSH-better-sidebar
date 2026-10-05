@@ -110,6 +110,7 @@ export const tr: Record<string, string> = {
   gitStatusConflict: 'Çakışma',
   changesClean: 'Çalışma alanında değişiklik yok',
   changesNoHistory: 'Henüz commit geçmişi yok',
+  changesNewFile: 'Yeni dosya',
   changesStageFailed: 'Sahneleme başarısız: {message}',
   changesOpGone: 'Bu işlem artık oturum günlüğünde değil',
   newTab: 'Yeni sekme',

@@ -110,6 +110,7 @@ export const vi: Record<string, string> = {
   gitStatusConflict: 'Xung đột',
   changesClean: 'Không có thay đổi trong workspace',
   changesNoHistory: 'Chưa có lịch sử commit',
+  changesNewFile: 'Tệp mới',
   changesStageFailed: 'Stage thất bại: {message}',
   changesOpGone: 'Thao tác này không còn trong nhật ký phiên',
   newTab: 'Tab mới',

@@ -111,6 +111,7 @@ export const ar: Record<string, string> = {
   gitStatusConflict: 'تعارض',
   changesClean: 'لا توجد تغييرات في مساحة العمل',
   changesNoHistory: 'لا يوجد سجل إيداعات بعد',
+  changesNewFile: 'ملف جديد',
   changesStageFailed: 'فشل الإدراج: {message}',
   changesOpGone: 'لم تعد هذه العملية في سجل الجلسة',
   newTab: 'تبويب جديد',
