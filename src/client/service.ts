@@ -292,6 +292,11 @@ export interface FileViewerProps {
   title: string
   /** The matching descriptor's id (`'code'`, `'my-plugin:csv'`). */
   viewerId: string
+  /** The 1-based line the tab's file reference named, when it carried one
+   *  (`a/b.c#L131`, `a/b.c:131` — see #826). A viewer that renders text
+   *  positions the reader there once, on arrival; every other viewer ignores
+   *  it. Absent on an ordinary open. */
+  line?: number
   /** fsRead text content (fetchStrategy='fsRead'). */
   content?: string
   truncated?: boolean

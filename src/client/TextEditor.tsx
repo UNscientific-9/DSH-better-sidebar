@@ -55,7 +55,7 @@ const previewScrollMemory = new Map<string, number>()
 const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
 
 export function TextEditor(props: FileViewerProps) {
-  const { ctx, scope, path, viewerId, content, truncated } = props
+  const { ctx, scope, path, viewerId, content, truncated, line } = props
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -291,6 +291,60 @@ export function TextEditor(props: FileViewerProps) {
     observer.observe(host)
     return () => { observer.disconnect() }
   }, [content, path])
+
+  /** The landing line already honoured, as `${path}#${line}`. The host keeps a
+   *  visited tab body mounted (`keepMounted`) and re-delivers its navigation on
+   *  every store notification, so without this a reader would be yanked back to
+   *  the same line each time — while a NEW line on the SAME file must land. */
+  const landedAtRef = useRef<string | null>(null)
+
+  // Land on the line a file reference named (`a/b.c#L131`, `a/b.c:131` — #826).
+  // One-shot per (file, line): an ordinary open carries no line and never
+  // fires, and a fresh reference re-fires it.
+  useEffect(() => {
+    if (line === undefined) {
+      landedAtRef.current = null
+      return
+    }
+    if (content === undefined) return
+    const view = viewRef.current
+    if (view === null) return
+    const key = `${path}#${line}`
+    if (landedAtRef.current === key) return
+    // A markdown/html file opens in preview, which has no source lines to put
+    // a cursor on. The reference asked for source, so land in the editor; the
+    // key is NOT recorded yet, so the re-run after the flip does the jump.
+    if ((markdown || html) && mode === 'preview') {
+      setMode('edit')
+      return
+    }
+    landedAtRef.current = key
+    // Out-of-range references clamp to the last line rather than throwing —
+    // the file can have changed since the link was written.
+    const doc = view.state.doc
+    const target = doc.line(Math.min(Math.max(line, 1), doc.lines)).from
+    // Position by writing the editor's OWN scroller (after a fresh measure)
+    // instead of CodeMirror's scrollIntoView: that path walks every scrollable
+    // ancestor — and even the window when the browser is zoomed
+    // (visualViewport < innerHeight) — which dragged the whole sidebar up when
+    // the reader was at the very end of the document. A plain scrollTop write
+    // on the editor scroller can never touch anything outside the editor.
+    view.requestMeasure()
+    view.dispatch({ selection: { anchor: target } })
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const block = view.lineBlockAt(target)
+        view.scrollDOM.scrollTop = Math.max(0, block.top - 8)
+        // CodeMirror's scroll-observer is async and can lag a direct write, so
+        // force a re-measure at the NEW scroll position or the virtualized
+        // viewport keeps rendering the old one.
+        view.requestMeasure()
+      })
+    })
+    // The reveal reads the live view ref; `markdown`/`html` are derived from
+    // `viewerId`, which the view-creation effect already keys on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, path, line, mode])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
