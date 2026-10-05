@@ -427,6 +427,11 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const wanted = new Map<string, () => () => void>()
       for (const descriptor of service.getTabs()) {
         if (!service.isTabEnabled(descriptor.id)) continue
+        // A `bottomOnly` type lives in the plugin's own workbench and has no
+        // native tab: registering one would put a second capsule in the
+        // host's guide for a page it cannot draw (the bottom terminal is the
+        // case — the host owns the right-Sidebar `terminal` kind outright).
+        if (descriptor.bottomOnly === true) continue
         wanted.set(descriptor.id, () => registerDescriptor(descriptor))
       }
       for (const [descriptorId, registration] of live) {

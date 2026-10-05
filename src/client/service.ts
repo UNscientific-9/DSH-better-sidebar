@@ -186,6 +186,22 @@ export interface TabDescriptor {
   /** Hide from the + menu (the editor tab is opened by file-open, not by the menu). */
   hidden?: boolean
   /**
+   * Bottom-workbench-only type (v0.26.0+): offered in the plugin's OWN bottom
+   * + menu and nowhere else. Without this flag every registered type also
+   * becomes a tab type of DSH's native right Sidebar — a guide capsule plus a
+   * `kind` the host can open — which is wrong for a page that only makes sense
+   * docked under the conversation. (`terminal-bottom` is the case: its host
+   * counterpart is DSH's own right-Sidebar `terminal` type, so a second
+   * capsule titled "Terminal" is exactly the shadowing
+   * `tests/e2e/mount.e2e.ts` pins as absent.)
+   *
+   * Effects: `openTab` forces this type's landing to the bottom workbench
+   * whatever `target` the caller asked for, and the native surface registers
+   * neither a type nor a guide entry for it. `hidden` is unrelated — that one
+   * hides a type from the + menu while keeping its native tab.
+   */
+  bottomOnly?: boolean
+  /**
    * + menu disabled predicate (e.g. terminal at capacity). Receives the
    * session scope and the live sidebar state (counts, expansions).
    */
@@ -448,7 +464,9 @@ export interface OpenTabSeed {
    * Where the open lands. `'right'` (the default) is DSH's right Sidebar —
    * the plugin's content is registered there as native tab types; `'bottom'`
    * is the plugin's own bottom workbench. Only the plugin's own flows pass
-   * `'bottom'` (the bottom panel's + menu, the auto-terminal).
+   * `'bottom'` (the bottom panel's + menu, the auto-terminal). A descriptor
+   * declaring `bottomOnly` is forced there whatever this says: it has no
+   * native tab type to land in.
    *
    * `'side'` also means the right Sidebar, but it lands in a SECOND pane
    * there (`preferNewPane`, the host's own split): that is the "open to the
@@ -959,7 +977,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
     // ── Native right Sidebar ──────────────────────────────────────────────
     // With the native surface installed, every open except an explicit
-    // bottom-panel one lands there. The path seed's meaning depends on the
+    // bottom-panel one — and except a `bottomOnly` type, which has no native
+    // tab at all — lands there. The path seed's meaning depends on the
     // type: `editor` is the only kind registered with
     // `dsh-resource://file/**` patterns (src/client/native/index.ts), so its
     // path seeds become resource addresses (the native registry routes the
@@ -968,7 +987,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     // component state, not a file to open — and rides the seed (path
     // included) as navigation params, which the tab adapter merges onto the
     // synthetic record's `tab.path` for the registered component.
-    if (surface !== undefined && seed.target !== 'bottom') {
+    if (surface !== undefined && seed.target !== 'bottom' && descriptor.bottomOnly !== true) {
       // "Open to the side" asks the host for a NEW pane instead of reusing
       // the pane the acting tab lives in. `revealIfOpened: false` permits a
       // duplicate of an already-open resource, so the split really happens
