@@ -1480,6 +1480,13 @@ export function FileTree(props: {
   const [archiveBusy, setArchiveBusy] = useState(false)
   const [archiveProgress, setArchiveProgress] = useState<{ done: number; total: number } | null>(null)
   const archiveBusyRef = useRef(false)
+  /**
+   * Bumped by a session/cwd swap. A build still starting up when the reader
+   * leaves must not pump its job back in: the swap already settled the archive,
+   * and the resurrected id would restart the poller in the new project — asking
+   * with the wrong scope, then reporting a zip failure nobody asked for.
+   */
+  const archiveGenRef = useRef(0)
   /** The job being polled (state so the poller starts/stops with it). */
   const [archiveJobId, setArchiveJobId] = useState<string | null>(null)
   const archiveJobRef = useRef<{ id: string; name: string } | null>(null)
@@ -1499,11 +1506,13 @@ export function FileTree(props: {
     setArchiveProgress(null)
   }, [])
 
-  // A session/cwd swap abandons the archive job with it: the poller would keep
-  // asking with the NEW scope for the PREVIOUS session's job (the host refuses
-  // that), and the strip would report a zip failure in a project that never
-  // asked for one.
+  // A session/cwd swap abandons the archive job with it: the progress strip
+  // belongs to the project that started the zip, and a leftover `archiveJobId`
+  // would keep the poller running — whose failures land as `zipFailed` in a
+  // project that never asked for one. The generation bump retires a build that
+  // is still starting up, so it cannot pump its job back in after this.
   useEffect(() => {
+    archiveGenRef.current += 1
     settleArchive()
   }, [sessionId, cwd, settleArchive])
 
@@ -1583,17 +1592,20 @@ export function FileTree(props: {
   const downloadArchive = (paths: readonly string[]): void => {
     if (archiveBusyRef.current) return
     const name = paths.length === 1 ? `${baseName(paths[0]!)}.zip` : 'archive.zip'
+    const generation = archiveGenRef.current
     archiveBusyRef.current = true
     archiveHandedOffRef.current = false
     setArchiveBusy(true)
     setArchiveProgress(null)
     void archiveBuild({ sessionId, cwd }, paths, name)
       .then(({ id, entries }) => {
+        if (generation !== archiveGenRef.current) return
         archiveJobRef.current = { id, name }
         setArchiveProgress({ done: 0, total: entries })
         setArchiveJobId(id)
       })
       .catch((error: unknown) => {
+        if (generation !== archiveGenRef.current) return
         failArchive(error instanceof Error ? error.message : String(error))
       })
   }
