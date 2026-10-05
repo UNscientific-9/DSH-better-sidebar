@@ -981,6 +981,17 @@ export function FileTree(props: {
   }, [setSelection])
 
   /**
+   * Bumped by the swap effect below, and the boundary it marks is shared: the
+   * two asynchronous paths this component starts — the batch-delete walk and
+   * the archive build — capture their OWN scope, so the requests they issue
+   * stay correct across a swap, while everything they SETTLE (pruneTree, the
+   * error strip, the selection, the busy flags, the archive job) is state of
+   * the project on screen, which may no longer be the one they started in.
+   * Work whose generation is stale goes quiet instead.
+   */
+  const scopeGenRef = useRef(0)
+
+  /**
    * A session/cwd swap REUSES this component: the workbench keeps one mounted
    * instance per tab id, and tab ids restart per session. Every path-shaped
    * piece of state here therefore outlives the project it was picked in — and
@@ -1010,12 +1021,11 @@ export function FileTree(props: {
     newFolderRef.current = null
     setConfirmDelete(null)
     setConfirmDeleteSelected(false)
-    // A batch walk of the PREVIOUS session may still be in flight. Its
-    // removals carry their own scope, so they stay correct — but the walk must
-    // not settle over THIS session (see batchGenRef), and its flag must not
-    // lock the new session's bar either.
+    // A batch walk of the PREVIOUS session may still be in flight: its flag
+    // must not lock the new session's bar, and the bump below retires the
+    // state it would otherwise settle here.
     setDeletingSelected(false)
-    batchGenRef.current += 1
+    scopeGenRef.current += 1
     setActionError(null)
     setLoadError(null)
     pendingUploadDir.current = undefined
@@ -1141,14 +1151,6 @@ export function FileTree(props: {
 
   // ── Batch delete ───────────────────────────────────────────────────────
   /**
-   * Bumped by a session/cwd swap. The walk below carries its OWN scope, so the
-   * removals it issues stay correct — but everything it SETTLES (pruneTree, the
-   * error strip, the selection, the busy flag) is state of the project on
-   * screen, which may no longer be the one it started in. A walk whose
-   * generation is stale goes quiet instead.
-   */
-  const batchGenRef = useRef(0)
-  /**
    * Delete every selected row, ONE AT A TIME (the host refuses nothing here,
    * but a partial batch must be debuggable). The first failure stops the walk
    * and lands in the error strip; already-removed rows settle as they go.
@@ -1160,7 +1162,7 @@ export function FileTree(props: {
     setConfirmDeleteSelected(false)
     if (paths.length === 0) return
     const scope = { sessionId: live.sessionId, cwd: live.cwd }
-    const generation = batchGenRef.current
+    const generation = scopeGenRef.current
     setDeletingSelected(true)
     void (async () => {
       const removed: string[] = []
@@ -1168,7 +1170,7 @@ export function FileTree(props: {
         try {
           await api.fsRemove(scope, path)
         } catch (error: unknown) {
-          if (generation !== batchGenRef.current) return
+          if (generation !== scopeGenRef.current) return
           setActionError(error instanceof Error ? error.message : String(error))
           // Keep the rows that were NOT removed selected, so a retry is one click.
           const next = new Set(selectedRef.current)
@@ -1177,16 +1179,14 @@ export function FileTree(props: {
           setDeletingSelected(false)
           return
         }
-        // The reader moved on mid-walk: drop the rest of the batch rather than
-        // settle it into the project that took over. The swap already released
-        // the busy flag, so nothing here needs to.
-        if (generation !== batchGenRef.current) return
+        // Stale walk: the swap already released the busy flag.
+        if (generation !== scopeGenRef.current) return
         setActionError(null)
         pruneTree(path)
         live.onPathDeleted?.(path, kindRef.current.get(path) ?? false)
         removed.push(path)
       }
-      if (generation !== batchGenRef.current) return
+      if (generation !== scopeGenRef.current) return
       setDeletingSelected(false)
       clearSelection()
     })()
@@ -1484,13 +1484,6 @@ export function FileTree(props: {
   const [archiveBusy, setArchiveBusy] = useState(false)
   const [archiveProgress, setArchiveProgress] = useState<{ done: number; total: number } | null>(null)
   const archiveBusyRef = useRef(false)
-  /**
-   * Bumped by a session/cwd swap. A build still starting up when the reader
-   * leaves must not pump its job back in: the swap already settled the archive,
-   * and the resurrected id would restart the poller in the new project — asking
-   * with the wrong scope, then reporting a zip failure nobody asked for.
-   */
-  const archiveGenRef = useRef(0)
   /** The job being polled (state so the poller starts/stops with it). */
   const [archiveJobId, setArchiveJobId] = useState<string | null>(null)
   const archiveJobRef = useRef<{ id: string; name: string } | null>(null)
@@ -1510,13 +1503,12 @@ export function FileTree(props: {
     setArchiveProgress(null)
   }, [])
 
-  // A session/cwd swap abandons the archive job with it: the progress strip
+  // A session/cwd swap abandons the archive job with it — the progress strip
   // belongs to the project that started the zip, and a leftover `archiveJobId`
-  // would keep the poller running — whose failures land as `zipFailed` in a
-  // project that never asked for one. The generation bump retires a build that
-  // is still starting up, so it cannot pump its job back in after this.
+  // would keep the poller running in the new one, whose failures land as
+  // `zipFailed` there. A build still starting up is retired by the swap effect
+  // above (scopeGenRef), so it cannot pump its job back in after this.
   useEffect(() => {
-    archiveGenRef.current += 1
     settleArchive()
   }, [sessionId, cwd, settleArchive])
 
@@ -1596,20 +1588,20 @@ export function FileTree(props: {
   const downloadArchive = (paths: readonly string[]): void => {
     if (archiveBusyRef.current) return
     const name = paths.length === 1 ? `${baseName(paths[0]!)}.zip` : 'archive.zip'
-    const generation = archiveGenRef.current
+    const generation = scopeGenRef.current
     archiveBusyRef.current = true
     archiveHandedOffRef.current = false
     setArchiveBusy(true)
     setArchiveProgress(null)
     void archiveBuild({ sessionId, cwd }, paths, name)
       .then(({ id, entries }) => {
-        if (generation !== archiveGenRef.current) return
+        if (generation !== scopeGenRef.current) return
         archiveJobRef.current = { id, name }
         setArchiveProgress({ done: 0, total: entries })
         setArchiveJobId(id)
       })
       .catch((error: unknown) => {
-        if (generation !== archiveGenRef.current) return
+        if (generation !== scopeGenRef.current) return
         failArchive(error instanceof Error ? error.message : String(error))
       })
   }

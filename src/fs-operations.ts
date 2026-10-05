@@ -127,13 +127,11 @@ export interface WorkspaceRenameInput {
  * No realpath, no containment: the path exists (lstat decides) and the
  * operation addresses it as written.
  */
-async function resolveEntry(
+function resolveEntry(
   cwd: string,
   target: string,
-): Promise<{ absolute: string; realCwd: string }> {
-  const absolute = resolveTarget(cwd, target)
-  const realCwd = requireAbsolute(cwd)
-  return { absolute, realCwd }
+): { absolute: string; realCwd: string } {
+  return { absolute: resolveTarget(cwd, target), realCwd: requireAbsolute(cwd) }
 }
 
 /**
@@ -211,7 +209,7 @@ export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise
   if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
     throw new SidebarError('bad-request', 'name must be a single path segment', 400)
   }
-  const { absolute, realCwd } = await resolveEntry(cwd, path)
+  const { absolute, realCwd } = resolveEntry(cwd, path)
   if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot rename the workspace root', 400)
   }
@@ -256,7 +254,7 @@ export async function mkdirWorkspaceEntry(input: WorkspaceMkdirInput): Promise<{
   if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
     throw new SidebarError('bad-request', 'name must be a single path segment', 400)
   }
-  const { absolute } = await resolveEntry(cwd, path)
+  const { absolute } = resolveEntry(cwd, path)
   const destination = await ensureWorkspaceWritePath(cwd, join(absolute, name))
   if (await pathExists(destination)) {
     throw new SidebarError('fs-error', `"${name}" already exists`, 409)
@@ -291,7 +289,7 @@ export interface WorkspaceRemoveInput {
  */
 export async function removeWorkspaceEntry(input: WorkspaceRemoveInput): Promise<{ path: string }> {
   const { cwd, path } = input
-  const { absolute, realCwd } = await resolveEntry(cwd, path)
+  const { absolute, realCwd } = resolveEntry(cwd, path)
   if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot remove the workspace root', 400)
   }
