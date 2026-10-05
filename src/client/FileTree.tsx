@@ -1004,6 +1004,10 @@ export function FileTree(props: {
     setCopiedPath(null)
     setRenaming(null)
     setNewFolder(null)
+    // The ref is synced during render, so it still holds the previous session's
+    // editor until the next one — long enough for a blur in this tick to mkdir
+    // that dir under the new scope.
+    newFolderRef.current = null
     setConfirmDelete(null)
     setConfirmDeleteSelected(false)
     // A batch walk of the PREVIOUS session may still be in flight. Its
