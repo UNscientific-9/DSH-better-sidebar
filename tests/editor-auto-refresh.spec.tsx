@@ -78,6 +78,24 @@ function editPair(seq: number, path: string, callId = `e${seq}`): SidebarSession
   ]
 }
 
+/** One settled, successful `read` call pair (a READ touches no bytes). */
+function readPair(seq: number, path: string, callId = `r${seq}`): SidebarSessionEvent[] {
+  return [
+    {
+      type: 'tool/call',
+      seq,
+      time: seq,
+      data: { name: 'read', callId, arguments: JSON.stringify({ file_path: path }) },
+    },
+    {
+      type: 'tool/result',
+      seq: seq + 1,
+      time: seq + 1,
+      data: { message: { role: 'tool', source: { kind: 'tool', callId }, content: [{ type: 'text', text: 'ok' }] } },
+    },
+  ]
+}
+
 /** The delta one poll answers with, and the cursor it reports. */
 function delta(events: SidebarSessionEvent[], lastSeq: number): { events: SidebarSessionEvent[]; lastSeq: number } {
   return { events, lastSeq }
@@ -339,6 +357,28 @@ describe('editor preview auto-refresh (#855)', () => {
     }
   })
 
+  it('B: a settled READ of this very file refreshes nothing (a read changes no bytes)', async () => {
+    const { ctx, tabOf } = harness('session-b-read')
+    const view = mount(ctx, 'session-b-read', tabOf('/tmp/a.ts'))
+    try {
+      await settle()
+      expect(reads()).toBe(1)
+
+      // The model reads the file it is already showing: the most common tool
+      // call of a session, and one that leaves the bytes exactly as they were.
+      // Only a mutation that lets `kind === 'read'` through the stream's filter
+      // can make this reload (see the CHANGELOG's mutation list).
+      changesOps.mockResolvedValue(delta(readPair(11, '/tmp/a.ts'), 12))
+      await tick(3)
+
+      expect(reads()).toBe(1)
+      expect(draftOf(view.container)).toBe('body-1')
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   it('C: a dirty draft is never overwritten by the model writing the file', async () => {
     const { ctx, tabOf } = harness('session-c')
     const view = mount(ctx, 'session-c', tabOf('/tmp/a.ts'))
@@ -474,6 +514,40 @@ describe('editor preview auto-refresh (#855)', () => {
       view.rerender(editorElement(ctx, 'session-h', tab, true))
       await tick(1)
       expect(reads()).toBe(2)
+      expect(draftOf(view.container)).toBe('body-2')
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('I: retargeting a tab onto a path touched a moment ago does not re-read it', async () => {
+    const { ctx, tabOf } = harness('session-i')
+    const tabA = tabOf('/tmp/a.ts')
+    const tabB = tabOf('/tmp/b.ts')
+    const view = mount(ctx, 'session-i', tabA)
+    try {
+      await settle()
+      expect(readsOf('/tmp/a.ts')).toBe(1)
+
+      // The model writes B while this tab shows A. The touch is PUBLISHED now
+      // (revision 1) and matches nothing yet.
+      changesOps.mockResolvedValue(delta(writePair(11, '/tmp/b.ts'), 12))
+      await tick(1)
+      expect(readsOf('/tmp/b.ts')).toBe(0)
+
+      // The user retargets this very tab onto B (merged mode's in-place switch):
+      // its own load reads the file ONCE, and that read is already the fresh
+      // content of the write above...
+      view.rerender(editorElement(ctx, 'session-i', tabB, true))
+      await settle()
+      expect(readsOf('/tmp/b.ts')).toBe(1)
+
+      // ...so the touch published BEFORE the retarget must not reload it again
+      // (opBaseline's per-path revision: without it this is a second read and a
+      // remount that throws away scroll position for identical bytes).
+      await tick(3)
+      expect(readsOf('/tmp/b.ts')).toBe(1)
       expect(draftOf(view.container)).toBe('body-2')
     } finally {
       view.unmount()
