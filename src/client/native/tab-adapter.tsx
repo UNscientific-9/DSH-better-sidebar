@@ -23,7 +23,7 @@
  * Nothing here is a singleton: the registry is created once per client
  * activation and handed to every registration.
  */
-import { createElement, useMemo, useSyncExternalStore } from 'react'
+import { createElement, useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
@@ -32,7 +32,8 @@ import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
 import { useSessionRoot } from '../use-session-root.ts'
 import type { BetterSidebarService } from '../service.ts'
-import { toggleExpanded } from '../state.ts'
+import { t } from '../locales.ts'
+import { isUnread, toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
 
@@ -561,13 +562,50 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
   const glyph = icon ?? (typeof descriptor?.icon === 'function'
     ? descriptor.icon(CHIP_ICON_SIZE)
     : descriptor?.icon)
-  if (glyph === undefined || glyph === null) return title
+  // "The reader has not looked at this page": the tab type this chip belongs
+  // to carries a mark (a background activation opened its page without taking
+  // the column over). The unread store subscription is what re-renders the
+  // chip when the mark appears or retires — the native record's own version
+  // does not move for either.
+  const unread = useSyncExternalStore(
+    listener => service.subscribeState(listener),
+    () => isUnread(service.getSnapshot().state, record?.tab.type ?? descriptorId),
+  )
+  // …and the chip is also what RETIRES the mark: this tab being visible means
+  // the reader is looking at its page now. Guarded on BOTH flags, so an
+  // inactive chip (the host draws every expanded tab's title) clears nothing
+  // and a chip with no mark never touches the store.
+  const type = record?.tab.type ?? descriptorId
+  const visible = nativeTab.visible === true
+  useEffect(() => {
+    if (visible && unread) service.clearUnread(type, sessionId)
+  }, [visible, unread, type, sessionId, service])
+  if (glyph === undefined || glyph === null) {
+    return unread ? <>{title}<UnreadDot /></> : title
+  }
   return (
     <>
       {/* Decorative: the chip's accessible name stays the title. */}
       <span className={css.chipIcon} aria-hidden="true">{glyph}</span>
       {title}
+      {unread ? <UnreadDot /> : null}
     </>
+  )
+}
+
+/**
+ * The native chip's unread mark. `role="img"` + a label so the dot is
+ * announced rather than skipped as decoration (the glyph beside it is the
+ * decorative one — `aria-hidden` — while this carries the state).
+ */
+function UnreadDot(): ReactNode {
+  return (
+    <span
+      className={css.chipUnread}
+      role="img"
+      aria-label={t('tabUnread')}
+      title={t('tabUnread')}
+    />
   )
 }
 
