@@ -30,7 +30,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { PAGE_URL, createHostApi, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
@@ -155,6 +155,45 @@ test.beforeAll(async () => {
   await seedSession()
 })
 
+/**
+ * Dismiss the keyless boot's onboarding takeovers, which mask the whole shell:
+ * a versioned welcome notice ("Continue", persists its acknowledgement to
+ * settings) and, once that is acknowledged, a provider-config dialog
+ * ("Configure later", session-only — always present while no credential is
+ * configured). Both mount only after the settings join resolves. Wait
+ * (bounded) for one to appear; a DSH build without onboarding proceeds
+ * straight on.
+ *
+ * Dismissal loops until none remain, in any stacking order — a masked click is
+ * retried next round instead of failing.
+ * @param page - the lane's page.
+ */
+async function dismissOnboarding(page: Page): Promise<void> {
+  try {
+    await expect
+      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+      .toBeGreaterThan(0)
+  } catch {
+    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const name of ['Continue', 'Configure later']) {
+      const button = page.getByRole('button', { name, exact: true }).first()
+      if ((await button.count()) === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // Masked by the takeover stacked above it; the next round tries the
+        // other button first.
+      }
+    }
+    if (!dismissed) break
+  }
+}
+
 test.afterAll(async () => {
   await api?.dispose()
 })
@@ -195,38 +234,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   expect(hostZ).toBeGreaterThan(20)
   expect(hostZ).toBeLessThan(30)
 
-  // A keyless boot stacks onboarding takeovers that mask the whole shell: a
-  // versioned welcome notice ("Continue", persists its acknowledgement to
-  // settings) and, once that is acknowledged, a provider-config dialog
-  // ("Configure later", session-only — always present while no credential is
-  // configured). Both mount only after the settings join resolves. Wait
-  // (bounded) for one to appear; a DSH build without onboarding proceeds
-  // straight to the sweep.
-  try {
-    await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
-    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
-  }
-  // Dismiss whatever takeover is present, in any stacking order, until none
-  // remain — a masked click is retried next round instead of failing.
-  for (let round = 0; round < 8; round++) {
-    let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
-      const button = page.getByRole('button', { name, exact: true }).first()
-      if ((await button.count()) === 0) continue
-      try {
-        await button.click({ timeout: 4_000 })
-        dismissed = true
-        await page.waitForTimeout(1_000)
-      } catch {
-        // Masked by the takeover stacked above it; the next round tries the
-        // other button first.
-      }
-    }
-    if (!dismissed) break
-  }
+  // A keyless boot stacks onboarding takeovers that mask the whole shell; see
+  // dismissOnboarding.
+  await dismissOnboarding(page)
 
   // The seeded session must give the sidebar a session scope: without it the
   // workbench has no pane to render and the tab sweep is impossible.
@@ -646,6 +656,120 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // Final screenshot: the rendered panel with a session is the lane's proof.
   await page.screenshot({ path: 'test-results/mount-final.png' })
+})
+
+test('the bottom workbench opens the plugin terminal (#774) without shadowing the host terminal', async ({ page }) => {
+  // The bottom terminal is the ONE plugin page that is not a native tab type
+  // (`bottomOnly`): it draws its own xterm against the host's session-scoped
+  // terminal service. Two things must hold at once in a real browser —
+  //  - the tab opens, mounts a real emulator and the chunk is fetched from
+  //    /sidebar/bundle/terminal.js, with no console error or pageerror, and
+  //  - DSH's own right-Sidebar `terminal` capsule is STILL exactly one: the
+  //    plugin must not be shadowing the host again (AGENTS §2).
+  const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(String(error)))
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text())
+  })
+
+  const terminalChunk = page.waitForResponse(
+    (response) => response.url().includes('/sidebar/bundle/terminal.js'),
+    { timeout: 120_000 },
+  )
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+
+  // The seeded session already has content — the header's workbench toggle is
+  // registered into DSH's session-header utilities, which render only for such
+  // a session. Open the native right column FIRST: the guide below is what the
+  // shadowing assertion reads, and the bottom panel anchors itself to the
+  // center column DSH's AppFrame lays out between the two sidebars, so the
+  // column has to be in its settled geometry before the panel measures it.
+  await sendFirstMessage(page)
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  const guide = page.locator('[data-sidebar-right-guide]')
+  await expect(guide).toBeVisible({ timeout: 60_000 })
+  const hostTerminalEntry = page.locator('[data-sidebar-right-guide-entry="terminal"]')
+  await expect(
+    hostTerminalEntry,
+    'the host terminal capsule must exist before the plugin one (baseline)',
+  ).toHaveCount(1, { timeout: 30_000 })
+
+  // The workbench toggle is a TOGGLE, and a session that already shows its
+  // seeded editor tab is open on arrival — clicking unconditionally would
+  // collapse it, and every later query would then measure the slid-off
+  // (translateY(102%)) panel.
+  const bottomExpand = page.locator('[data-dsh-bottom-toggle]:visible').first()
+  await expect(bottomExpand).toBeAttached({ timeout: 60_000 })
+  if ((await bottomExpand.getAttribute('data-active')) !== 'true') await bottomExpand.click()
+  await expect(bottomExpand, 'the workbench must end up expanded').toHaveAttribute('data-active', 'true', { timeout: 30_000 })
+  // The layout push is the expanded state's own observable: it is 0 while the
+  // workbench is closed (`bottomPushHeight`), so this also proves the panel is
+  // on screen rather than mid-slide.
+  await expect
+    .poll(
+      () => page.evaluate(() => Number.parseFloat(
+        document.documentElement.style.getPropertyValue('--dsh-sidebar-height'),
+      ) || 0),
+      { timeout: 60_000 },
+    )
+    .toBeGreaterThan(0)
+  const bottomPanel = page.locator('[data-dsh-bottom-panel]')
+  await expect(bottomPanel).toBeVisible({ timeout: 30_000 })
+
+  // The workbench's NEW-TAB surface is what must offer the type. An empty pane
+  // renders one card per openable type (`PaneEmptyCards`), fed by the very
+  // same `buildNewTabOptions` list as the + menu — so a `Terminal` card here
+  // is the same registration evidence, and unlike the + button it cannot be
+  // pushed out of the viewport by the strip's own scrollport.
+  const terminalCard = bottomPanel.getByRole('button', { name: 'Terminal', exact: true })
+  await expect(
+    terminalCard,
+    'the bottom workbench must offer the plugin terminal as an openable type',
+  ).toHaveCount(1, { timeout: 30_000 })
+  await terminalCard.click()
+
+  const terminal = bottomPanel.locator('[data-dsh-bottom-terminal]')
+  await expect(terminal, 'the bottom terminal view must mount').toHaveCount(1, { timeout: 30_000 })
+  await expect(
+    terminal.locator('.xterm'),
+    'a real xterm emulator must be attached (the chunk materialized)',
+  ).toHaveCount(1, { timeout: 60_000 })
+  await terminalChunk
+  // The host service is mounted on the web profile, so the view leaves its
+  // pending phases; a PTY the sandbox refuses still ends in a terminal state
+  // (failed/disconnected), which the status line reports rather than crashes.
+  await expect
+    .poll(async () => terminal.getAttribute('data-terminal-state'), { timeout: 60_000 })
+    .not.toBe('unavailable')
+  expect(
+    await terminal.getAttribute('data-terminal-state'),
+    'the terminal must not wedge in a pending phase',
+  ).not.toBe('loading')
+
+  // Shadowing check: the plugin's entry is bottom-only, so the host's own
+  // guide STILL lists exactly one `terminal` capsule — with the plugin's
+  // terminal now open beside it — and never one for `terminal-bottom`.
+  await expect(
+    hostTerminalEntry,
+    'the plugin must not shadow the host terminal',
+  ).toHaveCount(1, { timeout: 30_000 })
+  await expect(
+    page.locator('[data-sidebar-right-guide-entry="terminal-bottom"]'),
+    'a bottom-only type must never take a guide slot',
+  ).toHaveCount(0)
+  await expect(guide).toBeVisible()
+
+  expect(pageErrors, 'pageerrors during the terminal open').toEqual([])
+  expect(
+    consoleErrors.filter((text) => /dsh-better-sidebar|Unhandled/.test(text)),
+    'plugin-prefixed or unhandled console errors during the terminal open',
+  ).toEqual([])
+  await page.screenshot({ path: 'test-results/mount-terminal.png' })
 })
 
 test('conservative auto: URL stamps alone never modify the layout; plugin chrome carries the stable data attributes', async ({ page }) => {
