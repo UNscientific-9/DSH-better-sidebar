@@ -67,7 +67,9 @@ export function TreePanel(props: {
   openWithTargets?: OpenWithTarget[]
   openWithPinned?: string[]
   openWithSsh?: boolean
-  onOpenWith?: (targetId: string, path: string) => void
+  /** Open one plugin target (passed through to FileTree; `false`/rejection →
+   *  the tree reports the failure in its strip). */
+  onOpenWith?: (targetId: string, path: string) => void | boolean | Promise<void | boolean>
   onToggleOpenWithPin?: (targetId: string) => void
   /** Show the plugin's own open-with targets even when the host lists local
    *  applications for the path (the `openWithPluginTargets` setting; passed

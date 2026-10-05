@@ -100,6 +100,18 @@ function clampTreeWidth(value: number): number {
   return Math.min(TREE_WIDTH_MAX, Math.max(TREE_WIDTH_MIN, Math.round(value)))
 }
 
+/** Whether one external-open call was accepted: a rejected launch is logged
+ *  for diagnosis and answered `false`, so the caller can surface it. */
+function accepted(pending: Promise<unknown>): Promise<boolean> {
+  return pending.then(
+    () => true,
+    (error: unknown) => {
+      console.error('open external failed', error)
+      return false
+    },
+  )
+}
+
 export function EditorHost(props: {
   ctx: Context
   store: SidebarStore
@@ -254,22 +266,23 @@ export function EditorHost(props: {
    *  manager, or hand the target's URL to its opener — local `file` URLs go
    *  to the host's external opener, while the SSH-remote form for
    *  VSCode-family editors launches on the browser/client machine (see
-   *  api.openExternal). Failures are logged only — a missing handler is the
-   *  OS's/browser's dialog, not a sidebar error. */
-  const openWith = (targetId: string, absolute: string): void => {
+   *  api.openExternal).
+   *
+   *  Answers whether the hand-off was accepted. The host route now reports a
+   *  real failure when EVERY opener candidate fails (see
+   *  `src/open-external.ts`) instead of the old silent `{ started: true }`, so
+   *  a refusal is returned to the tree, which renders it — the log stays for
+   *  diagnosis. A missing handler on the other machine is still the OS's or
+   *  browser's own dialog. */
+  const openWith = (targetId: string, absolute: string): Promise<boolean> => {
     const target = openWithTargets.find(item => item.id === targetId)
-    if (target === undefined) return
+    if (target === undefined) return Promise.resolve(false)
     if (target.kind === 'reveal') {
-      void api.openExternal({ action: 'reveal', path: absolute }).catch(
-        (error: unknown) => { console.error('open external failed', error) },
-      )
-      return
+      return accepted(api.openExternal({ action: 'reveal', path: absolute }))
     }
     const url = openWithUrl(target, absolute, openWithConfig)
-    if (url === undefined) return
-    void api.openExternal({ action: 'url', url }).catch(
-      (error: unknown) => { console.error('open external failed', error) },
-    )
+    if (url === undefined) return Promise.resolve(false)
+    return accepted(api.openExternal({ action: 'url', url }))
   }
 
   /** Toggle one target's pinned state. The write is serialized (see

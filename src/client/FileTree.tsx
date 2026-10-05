@@ -459,8 +459,10 @@ export function FileTree(props: {
   openWithPinned?: string[]
   /** Whether the workspace is remote (appends the SSH hint to target labels). */
   openWithSsh?: boolean
-  /** Open one plugin target externally (reveal or URL — the caller decides). */
-  onOpenWith?: (targetId: string, path: string) => void
+  /** Open one plugin target externally (reveal or URL — the caller decides).
+   *  It answers `false` (or rejects) when the hand-off did not happen, and the
+   *  strip then reports it exactly like the host-backed rows. */
+  onOpenWith?: (targetId: string, path: string) => void | boolean | Promise<void | boolean>
   /** Toggle one plugin target's pinned state (the submenu row's pushpin). */
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft (file vs directory). */
@@ -1988,7 +1990,15 @@ export function FileTree(props: {
           // The plugin's own targets share one id space (pinned rows and
           // submenu children alike), so the caller gets the target id + path.
           if (id.startsWith('open-with:')) {
-            onOpenWith?.(id.slice('open-with:'.length), target.path)
+            // The caller owns the launch and answers whether it was accepted;
+            // a refusal (or a rejection) means nothing opened, so the failure
+            // lands in the same strip as the host-backed rows instead of only
+            // reaching the console (#412 was silence in this exact spot).
+            const pending = onOpenWith?.(id.slice('open-with:'.length), target.path)
+            void Promise.resolve(pending).then(
+              (accepted) => { if (accepted === false) reportOpenFailure(target.path) },
+              () => { reportOpenFailure(target.path) },
+            )
             return
           }
           if (id === 'reveal-in-file-manager') {
