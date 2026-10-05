@@ -1006,10 +1006,12 @@ export function FileTree(props: {
     setNewFolder(null)
     setConfirmDelete(null)
     setConfirmDeleteSelected(false)
-    // A batch walk of the PREVIOUS session may still be in flight (it carries
-    // its own scope, so it stays safe) — but its flag must not lock the new
-    // session's bar if that walk died without settling.
+    // A batch walk of the PREVIOUS session may still be in flight. Its
+    // removals carry their own scope, so they stay correct — but the walk must
+    // not settle over THIS session (see batchGenRef), and its flag must not
+    // lock the new session's bar either.
     setDeletingSelected(false)
+    batchGenRef.current += 1
     setActionError(null)
     setLoadError(null)
     pendingUploadDir.current = undefined
@@ -1135,6 +1137,14 @@ export function FileTree(props: {
 
   // ── Batch delete ───────────────────────────────────────────────────────
   /**
+   * Bumped by a session/cwd swap. The walk below carries its OWN scope, so the
+   * removals it issues stay correct — but everything it SETTLES (pruneTree, the
+   * error strip, the selection, the busy flag) is state of the project on
+   * screen, which may no longer be the one it started in. A walk whose
+   * generation is stale goes quiet instead.
+   */
+  const batchGenRef = useRef(0)
+  /**
    * Delete every selected row, ONE AT A TIME (the host refuses nothing here,
    * but a partial batch must be debuggable). The first failure stops the walk
    * and lands in the error strip; already-removed rows settle as they go.
@@ -1146,6 +1156,7 @@ export function FileTree(props: {
     setConfirmDeleteSelected(false)
     if (paths.length === 0) return
     const scope = { sessionId: live.sessionId, cwd: live.cwd }
+    const generation = batchGenRef.current
     setDeletingSelected(true)
     void (async () => {
       const removed: string[] = []
@@ -1153,6 +1164,7 @@ export function FileTree(props: {
         try {
           await api.fsRemove(scope, path)
         } catch (error: unknown) {
+          if (generation !== batchGenRef.current) return
           setActionError(error instanceof Error ? error.message : String(error))
           // Keep the rows that were NOT removed selected, so a retry is one click.
           const next = new Set(selectedRef.current)
@@ -1161,11 +1173,16 @@ export function FileTree(props: {
           setDeletingSelected(false)
           return
         }
+        // The reader moved on mid-walk: drop the rest of the batch rather than
+        // settle it into the project that took over. The swap already released
+        // the busy flag, so nothing here needs to.
+        if (generation !== batchGenRef.current) return
         setActionError(null)
         pruneTree(path)
         live.onPathDeleted?.(path, kindRef.current.get(path) ?? false)
         removed.push(path)
       }
+      if (generation !== batchGenRef.current) return
       setDeletingSelected(false)
       clearSelection()
     })()

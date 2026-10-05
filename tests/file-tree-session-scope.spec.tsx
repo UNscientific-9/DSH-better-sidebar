@@ -92,6 +92,13 @@ function selectionBar(): HTMLElement | null {
   return container.querySelector<HTMLElement>('[class*="explorerSelectionBar"]')
 }
 
+function barAction(label: string): HTMLElement {
+  const button = [...(selectionBar()?.querySelectorAll<HTMLElement>('button') ?? [])]
+    .find(el => el.textContent === label)
+  if (button === undefined) throw new Error(`bar action not found: ${label}`)
+  return button
+}
+
 function openMenu(name: string): void {
   const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 })
   act(() => { rowByName(name).dispatchEvent(event) })
@@ -107,7 +114,10 @@ afterEach(() => {
   act(() => { root.unmount() })
   container.remove()
   document.body.innerHTML = ''
-  fsRemove.mockClear()
+  // Reset, not clear: a case that parks a removal on a deferred promise must
+  // not leak that implementation into the next one.
+  fsRemove.mockReset()
+  fsRemove.mockImplementation(async (_scope: unknown, path: string) => ({ path }))
 })
 
 function mount(): void {
@@ -151,5 +161,42 @@ describe('FileTree session scope', () => {
 
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(fsRemove).not.toHaveBeenCalled()
+  })
+
+  it('stops a batch delete from the previous session from settling into the new one', async () => {
+    // The walk carries its own scope, so its removals stay correct — but it
+    // must not settle (pruneTree / the selection / the busy flag) into whatever
+    // project has taken over the instance since.
+    let release!: () => void
+    const held = new Promise<{ path: string }>((resolve) => {
+      release = () => { resolve({ path: '/projects/alpha/a.ts' }) }
+    })
+    fsRemove.mockImplementationOnce(async () => held)
+
+    await render('s1', '/projects/alpha')
+    click(rowByName('a.ts'), { ctrlKey: true })
+    click(rowByName('b.ts'), { ctrlKey: true })
+    act(() => { barAction('Delete selected').click() })
+    const confirm = [...document.querySelectorAll<HTMLElement>('button')]
+      .find(el => el.textContent === 'Delete selected' && el.closest('[role="dialog"]') !== null)
+    if (confirm === undefined) throw new Error('confirm button not found')
+    act(() => { confirm.click() })   // the first removal is now in flight
+    // …and it is parked there: one removal issued, the second row untouched.
+    expect(fsRemove.mock.calls).toHaveLength(1)
+
+    // Another session takes over the same mounted instance, and the reader
+    // makes a fresh selection there.
+    await render('s2', '/projects/beta')
+    click(rowByName('a.ts'), { ctrlKey: true })
+    expect(selectionBar()?.textContent).toContain('1 selected')
+
+    // The previous walk resumes. It must go quiet, not clear THIS selection.
+    await act(async () => { release() })
+    // The walk's tail is a plain microtask chain, outside act's tracking: give
+    // it (and React's flush of whatever it wrote) a beat to land.
+    await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+    expect(selectionBar()?.textContent).toContain('1 selected')
+    // …and the stale walk stopped instead of removing the rest of its batch.
+    expect(fsRemove.mock.calls).toHaveLength(1)
   })
 })
