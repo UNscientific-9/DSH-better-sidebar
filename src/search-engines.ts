@@ -215,7 +215,8 @@ export function escapeGlob(query: string): string {
 }
 
 /** Directory names that are never useful filename-search results (VCS
- *  internals, dependency forests, package-manager stores, build caches).
+ *  internals, dependency forests, package-manager stores, build caches,
+ *  worktree forests, language environments).
  *  The plain walk in fs-search.ts builds its case-insensitive skip set
  *  from this list, and BOTH engine argvs exclude every name — with
  *  --no-ignore active an rg/fd run would otherwise re-enter node_modules
@@ -238,6 +239,16 @@ export const SKIP_DIR_NAMES: readonly string[] = [
   'dist',
   'build',
   'out',
+  // #879: git-worktree forests (both spellings; `.worktrees/` is the
+  // layout DeepSeek Harness itself uses) burned the whole 100k visit budget
+  // on real projects before the walk reached project files. Language
+  // environments and their bytecode caches are noise of the same class.
+  '.worktrees',
+  '.worktree',
+  'target',
+  'venv',
+  '.venv',
+  '__pycache__',
   '.umi',
   '.umi-production',
   '.dumi',
