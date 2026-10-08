@@ -573,9 +573,13 @@ function buildApi(
       return { levels }
     },
     'fs.search': async (payload) => {
-      // The editor side panel's global name search: rooted at the session
-      // cwd (not caller-targetable — the walk is unbounded by design and
-      // must never escape the workspace), budgeted inside searchFiles.
+      // The editor side panel's global search. Name queries stay rooted at
+      // the session cwd (not caller-targetable — the walk is unbounded by
+      // design), budgeted inside searchFiles. A query carrying a path
+      // separator can never match a NAME, so searchFiles routes it
+      // differently: an absolute query stats its target (the same
+      // any-host-path reach fs.read has had since the workspace fence came
+      // off) and a relative fragment matches by path.
       const { cwd } = await cwdOf(payload)
       const record = payload as { exclude?: unknown }
       const query = requireString(payload, 'query')
