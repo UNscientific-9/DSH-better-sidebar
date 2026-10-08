@@ -560,6 +560,26 @@ describe('fs-search dispatch', () => {
     }
   })
 
+  // POSIX: the separator in a dot-anchored gesture must be one of the
+  // PLATFORM's own separators. `.\notes` is a legal entry NAME (a dot, then
+  // a backslash) — reading it as a direct-open path stats a path that cannot
+  // exist, so the name query and its engine eligibility are both lost.
+  it.skipIf(!canBackslashName)('a dot-prefixed POSIX name with a backslash stays a name query', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-dotbackslash-'))
+    try {
+      writeFileSync(join(dir, '.\\notes.md'), 'x')
+      let probed = false
+      setEngineHooks({
+        prober: async () => { probed = true; return [fakeFd] },
+        runner: async () => ({ paths: ['.\\notes.md'], dirs: [], truncated: false }),
+      })
+      expect((await searchFiles(dir, '.\\notes')).matches).toEqual(['.\\notes.md'])
+      expect(probed).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('caps engine output at maxMatches and reports truncated', async () => {
     setEngineHooks({
       prober: async () => [fakeFd],

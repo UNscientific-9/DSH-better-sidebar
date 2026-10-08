@@ -117,6 +117,24 @@ async function isDirectoryEntry(absolute: string, dirent: Dirent): Promise<boole
 }
 
 /**
+ * The platform's OWN path separators — on POSIX only `/`, on win32 both
+ * spellings. Shared by every "does this query carry a separator?" decision so
+ * they cannot drift apart: on POSIX a backslash is a legal name character (a
+ * name like `back\slash.ts` or `.\notes.md`), and reading one as a separator
+ * both steals the query from name matching and costs it engine eligibility.
+ */
+const SEPARATOR_RE = process.platform === 'win32' ? /[/\\]/ : /\//
+
+/**
+ * A dot-anchored relative path (`./x`, `../x`) — the separator after the dots
+ * must be one of the platform's own ({@link SEPARATOR_RE}), for the same
+ * reason `~\` is win32-gated below: `.\notes` is a POSIX entry NAME, so
+ * counting its backslash here would stat a path that cannot exist instead of
+ * matching the name.
+ */
+const DOT_ANCHORED_RE = process.platform === 'win32' ? /^\.+[/\\]/ : /^\.+\//
+
+/**
  * Whether `query` carries a path separator: such a query can never hit an
  * entry NAME and takes the path branches instead of name matching. Only the
  * platform's own separators count — on POSIX a backslash is a legal name
@@ -124,7 +142,7 @@ async function isDirectoryEntry(absolute: string, dirent: Dirent): Promise<boole
  * like `back\slash.ts`).
  */
 function hasSeparator(query: string): boolean {
-  return query.includes('/') || (process.platform === 'win32' && query.includes('\\'))
+  return SEPARATOR_RE.test(query)
 }
 
 /**
@@ -134,14 +152,15 @@ function hasSeparator(query: string): boolean {
  * treats the same forms as absolute), and dot-anchored relative paths
  * (`./x`, `../x`). No entry NAME can take these shapes — a name never
  * contains a separator — so the predicate steals no name query, with one
- * platform-bent exception: the `~\` form counts only on win32, because on
- * POSIX a backslash is a legal name character and `~\foo` can be a file's
- * NAME. Plain fragments (`records/exp1`) stay with the path-fragment branch.
+ * platform-bent exception: the `~\` form (and the `.\` spelling of a
+ * dot-anchored path) counts only on win32, because on POSIX a backslash is a
+ * legal name character and both `~\foo` and `.\foo` can be a file's NAME.
+ * Plain fragments (`records/exp1`) stay with the path-fragment branch.
  */
 function isDirectPathQuery(query: string): boolean {
   return isAbsolute(query)
     || query === '~' || query.startsWith('~/') || (process.platform === 'win32' && query.startsWith('~\\'))
-    || /^\.+[/\\]/.test(query)
+    || DOT_ANCHORED_RE.test(query)
 }
 
 /**

@@ -288,7 +288,7 @@ function streamLines(
     // matches intact, dirs silently empty). `close` fires only after every
     // stdio stream has ended, so every readline `line` event has fired
     // before the settlement. The truncation kill and the timeout/error
-    // finishes below are unaffected: whichever finish ran first sets
+    // finishes above are unaffected: whichever finish ran first sets
     // `closed`, and this handler is idempotent.
     child.once('close', (code) => {
       if (truncated) {
