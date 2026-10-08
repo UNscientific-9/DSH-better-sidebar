@@ -14,6 +14,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
@@ -57,22 +58,27 @@ vi.mock('../src/client/api.ts', () => ({
 let container: HTMLDivElement
 let root: Root
 
+/** The tree element for one project, as the workbench renders it. */
+function tree(sessionId: string, cwd: string) {
+  return createElement(FileTree, {
+    sessionId,
+    cwd,
+    expanded: [],
+    revealed: [],
+    onToggle: () => {},
+    onOpenFile: () => {},
+    onReferenceFile: () => {},
+    refreshTick: 0,
+    onUploadRequest: () => {},
+    busy: false,
+  })
+}
+
 /** Render — or RE-render in place — the one mounted tree, exactly as the
  *  workbench's reused tab instance does on a session swap. */
 async function render(sessionId: string, cwd: string): Promise<void> {
   await act(async () => {
-    root.render(createElement(FileTree, {
-      sessionId,
-      cwd,
-      expanded: [],
-      revealed: [],
-      onToggle: () => {},
-      onOpenFile: () => {},
-      onReferenceFile: () => {},
-      refreshTick: 0,
-      onUploadRequest: () => {},
-      busy: false,
-    }))
+    root.render(tree(sessionId, cwd))
   })
 }
 
@@ -108,6 +114,14 @@ function clickMenuitem(label: string): void {
   const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(el => el.textContent === label)
   if (item === undefined) throw new Error(`menuitem "${label}" not found`)
   act(() => { item.click() })
+}
+
+/** The confirmation modal's action button (the modal is portaled). */
+function confirmButton(label: string): HTMLElement {
+  const button = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')]
+    .find(el => el.textContent === label)
+  if (button === undefined) throw new Error(`dialog button "${label}" not found`)
+  return button
 }
 
 afterEach(() => {
@@ -198,5 +212,42 @@ describe('FileTree session scope', () => {
     expect(selectionBar()?.textContent).toContain('1 selected')
     // …and the stale walk stopped instead of removing the rest of its batch.
     expect(fsRemove.mock.calls).toHaveLength(1)
+  })
+
+  // The swap effect above is PASSIVE. A confirmation clicked between the
+  // swap's COMMIT and that effect reads the previous project's row while the
+  // props already carry the new scope — the request would then pair session
+  // B's scope with project A's absolute path, which the host applies verbatim.
+  // Only a call-site check closes that window; this case is why it exists.
+  it('refuses a confirmation clicked before the swap effect has flushed', async () => {
+    await render('s1', '/projects/alpha')
+    openMenu('a.ts')
+    clickMenuitem('Delete')
+    const confirm = confirmButton('Delete')
+
+    // The swap commits NOW and React has not yet run the swap effect.
+    flushSync(() => { root.render(tree('s2', '/projects/beta')) })
+    // The reader's click lands first — dispatched RAW, not through the `click`
+    // helper, whose act() wrapper would flush the effect and hide the window
+    // this case exists to cover.
+    confirm.click()
+    await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+
+    expect(fsRemove).not.toHaveBeenCalled()
+  })
+
+  // The positive control for the case above: with no swap the same flow still
+  // deletes, and it pairs the armed scope with the armed path. (Counting calls
+  // alone would not catch a regression that swapped the scope underneath.)
+  it('sends the armed scope together with the armed path', async () => {
+    await render('s1', '/projects/alpha')
+    openMenu('a.ts')
+    clickMenuitem('Delete')
+    click(confirmButton('Delete'))
+    await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+
+    expect(fsRemove.mock.calls).toEqual([
+      [{ sessionId: 's1', cwd: '/projects/alpha' }, '/projects/alpha/a.ts'],
+    ])
   })
 })
