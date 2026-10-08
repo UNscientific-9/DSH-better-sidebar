@@ -54,6 +54,22 @@ import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
 /**
+ * How long a rendered CONDITION may take to appear on a loaded runner.
+ *
+ * `vi.waitFor` defaults to 1000ms, which is INDEPENDENT of this suite's
+ * `testTimeout` (15s — raised for the Windows lane, where real child processes
+ * are slow to start). On a saturated 2-core ubuntu runner this file runs in
+ * parallel with 184 others and the tree's async level load can miss that first
+ * second: the lane failed here at ~1026ms, i.e. exactly the waitFor budget,
+ * with the tree still on its loading row.
+ *
+ * This is still a CONDITION wait, not the "bigger fixed slice of time" the
+ * note below warns against: it returns the moment the row renders, and a tree
+ * that can never list it still fails the case — just after 5s instead of 1s.
+ */
+const RENDER_WAIT_MS = 5_000
+
+/**
  * Wait until the tree has rendered the row for `name` — the precondition of
  * every tree interaction below.
  *
@@ -64,15 +80,14 @@ setupReactAct()
  * showing its loading row: the CI failure read `names=` (nothing rendered)
  * or `names=tmp` (the root row only). Wait for the rendered CONDITION, never
  * for a bigger fixed slice of time — a tree that never lists `name` is a real
- * product failure and still fails the case, on the default `vi.waitFor`
- * timeout.
+ * product failure and still fails the case.
  */
 async function waitForTreeRow(container: HTMLElement, name: string): Promise<void> {
   await vi.waitFor(() => {
     const found = [...container.querySelectorAll('[class*="explorerName"]')]
       .some(el => el.textContent === name)
     expect(found).toBe(true)
-  })
+  }, { timeout: RENDER_WAIT_MS })
 }
 
 /** A store with the seeded editor-home tab (default prefs: separate mode;
