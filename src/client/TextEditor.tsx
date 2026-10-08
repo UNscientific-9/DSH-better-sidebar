@@ -344,9 +344,14 @@ export function TextEditor(props: FileViewerProps) {
 
   // Native sidebar tabs stay mounted while another tab is active. If a file
   // is opened while that host is hidden, CodeMirror can measure its viewport at
-  // zero and retain an empty virtualized viewport after the tab is revealed.
-  // Re-measure both on mount and whenever the host's box changes so returning
-  // to a parked editor always repaints its document without remounting it.
+  // zero and retain an empty virtualized viewport after the tab is revealed —
+  // the gutter still draws its line numbers while the document body stays
+  // blank. Re-measure on every reveal, not just on a box-size change: the
+  // host's `retainTab` parks a body by MOVING it into a hidden seat and back,
+  // and moving a node never changes its border box, so a ResizeObserver alone
+  // never fires for that path. An IntersectionObserver reports the reveal
+  // itself; the rAF follow-up covers a reveal landing in the mount's own frame,
+  // where CodeMirror's first measure may still have read a zero box.
   useEffect(() => {
     const host = hostRef.current
     const view = viewRef.current
@@ -355,10 +360,33 @@ export function TextEditor(props: FileViewerProps) {
       if (host.isConnected && host.offsetWidth > 0 && host.offsetHeight > 0) view.requestMeasure()
     }
     measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(host)
-    return () => { observer.disconnect() }
+    const frame = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(() => { measure() })
+      : undefined
+    const disposers: (() => void)[] = []
+    if (typeof ResizeObserver !== 'undefined') {
+      const resize = new ResizeObserver(measure)
+      resize.observe(host)
+      disposers.push(() => { resize.disconnect() })
+    }
+    if (typeof IntersectionObserver !== 'undefined') {
+      const intersection = new IntersectionObserver((entries) => {
+        if (entries.some(entry => entry.isIntersecting)) measure()
+      })
+      intersection.observe(host)
+      disposers.push(() => { intersection.disconnect() })
+    }
+    const onVisibility = (): void => {
+      if (document.visibilityState !== 'hidden') measure()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('resize', measure)
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      for (const dispose of disposers) dispose()
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('resize', measure)
+    }
   }, [content, path])
 
   // Scheme flip: re-theme in place (the compartment holds only the
