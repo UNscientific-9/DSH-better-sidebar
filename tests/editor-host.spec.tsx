@@ -65,9 +65,11 @@ setupReactAct()
  *
  * This is still a CONDITION wait, not the "bigger fixed slice of time" the
  * note below warns against: it returns the moment the row renders, and a tree
- * that can never list it still fails the case — just after 5s instead of 1s.
+ * that can never list it still fails the case — just after 10s instead of 1s.
+ * 10s sits under the suite's 15s `testTimeout`, so a genuinely missing row
+ * still fails on the ASSERTION rather than on the test clock.
  */
-const RENDER_WAIT_MS = 5_000
+const RENDER_WAIT_MS = 10_000
 
 /**
  * Wait until the tree has rendered the row for `name` — the precondition of
@@ -83,6 +85,14 @@ const RENDER_WAIT_MS = 5_000
  * product failure and still fails the case.
  */
 async function waitForTreeRow(container: HTMLElement, name: string): Promise<void> {
+  // Give the scheduler a MACROTASK boundary first: the mount helpers drain
+  // microtasks only, and under load React can defer the tree's level flush
+  // past them entirely (the 2026-10-08 failure spent the whole budget waiting
+  // for a flush that had not been scheduled yet — it failed at 5044ms with a
+  // 5s budget, and passed on the very next run). The condition wait below is
+  // unchanged; this just stops the budget from ticking before the deferred
+  // work has had any chance to run.
+  await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
   await vi.waitFor(() => {
     const found = [...container.querySelectorAll('[class*="explorerName"]')]
       .some(el => el.textContent === name)
