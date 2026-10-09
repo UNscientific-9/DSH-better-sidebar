@@ -34,22 +34,41 @@ function headerEntryPresent(): boolean {
 }
 
 /**
- * 量宿主「右侧栏角落控件」的位置，返回本按钮应放的 top/left。
+ * 量本按钮应放的 top/left：贴在宿主「右侧栏角落控件」的**左侧空位**上。
  *
- * **锚点必须覆盖该控件的两种形态**：右侧栏**关闭**时它带 `data-sidebar-right-expand`
- * （aria-label「Open right sidebar」），**打开**时这个属性整个消失、同一个座位换成收起
- * 按钮 `data-sidebar-right-toggle`。只认前者的话，右侧栏一打开就会落到下面的视口兜底
- * 坐标（`innerWidth - 44`），而那里正是宿主自己的角落按钮群——备用入口于是精确压在
- * 「收起右侧栏」上（实测 2200px 视口下重叠 18px，与用户截图一致）。
+ * 两件事都不能靠猜：
+ *
+ * 1. **锚点要认控件的两种形态**——右侧栏关闭时它带 `data-sidebar-right-expand`，
+ *    打开时该属性整个消失、同一座位换成 `data-sidebar-right-toggle`。只认前者会落到
+ *    下面的视口兜底坐标（`innerWidth - 44`），而那里正是宿主自己的角落按钮群。
+ * 2. **让位不能让一个固定偏移**——宿主的角落控件是肩并肩一簇（实测打开态：
+ *    Split / Fullscreen / Collapse 各 28px、间隔 8px）。只往左挪 `GAP + BUTTON_SIZE`
+ *    正好落在**下一个**按钮上（实测：精确压住 Fullscreen 28x28px）。所以这里逐个槽位
+ *    左移，直到该槽位与**任何**宿主按钮都不相交；找不到完全不重叠的位置时（极窄窗口）
+ *    停在最左，宁可贴边也不叠。
+ *
+ * @returns 视口坐标下的 top/left。
  */
 function measure(): { top: number; left: number } {
   const anchor = document.querySelector('[data-sidebar-right-expand], [data-sidebar-right-toggle]')
   if (anchor === null) return { top: 8, left: window.innerWidth - BUTTON_SIZE - GAP - 8 }
   const rect = anchor.getBoundingClientRect()
-  return {
-    top: Math.max(4, rect.top + (rect.height - BUTTON_SIZE) / 2),
-    left: Math.max(4, rect.left - GAP - BUTTON_SIZE),
+  const top = Math.max(4, rect.top + (rect.height - BUTTON_SIZE) / 2)
+  // 同排的宿主按钮（本按钮自己除外）：只有与它竖直方向真的相交才算占位。
+  const occupied = [...document.querySelectorAll('button, [role="button"]')]
+    .filter(element => !element.hasAttribute('data-dsh-bottom-toggle'))
+    .map(element => element.getBoundingClientRect())
+    .filter(box => box.width > 4 && box.height > 4)
+  let left = rect.left - GAP - BUTTON_SIZE
+  for (let step = 0; step < 8; step++) {
+    const collides = occupied.some(box => left < box.right + GAP / 2
+      && left + BUTTON_SIZE > box.left - GAP / 2
+      && top < box.bottom
+      && top + BUTTON_SIZE > box.top)
+    if (!collides) break
+    left -= BUTTON_SIZE + GAP
   }
+  return { top, left: Math.max(4, left) }
 }
 
 export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
