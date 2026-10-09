@@ -163,6 +163,9 @@ export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
   if (phase === undefined || !phase.blank) return null
   // 兜底：相位说 blank、但会话头的入口确实在 DOM 里 —— 让位，绝不叠出第二套。
   if (headerEntry) return null
+  // 底栏已经展开时不渲染（里面那个按钮本身也会返回 null，这里连空壳一起省掉）：
+  // 收起由面板自己的 × 负责。
+  if (snapshot.state?.bottomOpen === true) return null
   // portal 到 body：面板宿主（z 20-30）的层叠上下文压不过会话头，按钮会被 titleRow
   // 拦截点击。40 高于 AppFrame(20) 与会话头、低于 DSH 浮层(100+)。
   return createPortal(
