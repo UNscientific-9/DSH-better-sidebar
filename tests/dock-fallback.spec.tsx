@@ -20,7 +20,7 @@ import './browser-globals.ts'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { DockFallback } from '../src/client/sidebar/dock-fallback.tsx'
 import { sessionPhase } from '../src/client/api.ts'
-import { createSidebarStore, toggleBottomPanel } from '../src/client/state.ts'
+import { createSidebarStore } from '../src/client/state.ts'
 
 setupReactAct()
 
@@ -212,24 +212,6 @@ describe('dock fallback（空白会话入口）', () => {
       anchor.remove()
       chip.remove()
       Object.defineProperty(document, 'elementsFromPoint', { configurable: true, writable: true, value: original })
-    }
-  })
-
-  // 「只有没展开的时候才显示」：展开态由面板自己的 × 收起，头部入口退场 ——
-  // 顺带把「头部入口 vs 备用入口」要争的那个位置从展开态整个去掉。
-  it('renders no entry at all while the bottom workbench is open', async () => {
-    phaseIs(true)
-    const { unmount, store } = renderDockFallback()
-    try {
-      await vi.waitFor(() => {
-        expect(document.querySelector('[data-dsh-dock-fallback]'), '未展开时备用入口应当在').not.toBeNull()
-      })
-      act(() => { store.reduce(toggleBottomPanel) })
-      expect(store.getSnapshot().state?.bottomOpen, '底栏已展开').toBe(true)
-      expect(document.querySelector('[data-dsh-dock-fallback]'), '展开态不该有备用入口').toBeNull()
-      expect(document.querySelector('[data-dsh-bottom-toggle]'), '展开态一个底部入口都没有').toBeNull()
-    } finally {
-      unmount()
     }
   })
 

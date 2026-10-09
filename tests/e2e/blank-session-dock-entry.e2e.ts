@@ -91,19 +91,15 @@ test('a blank session keeps the bottom workbench reachable from the top-right en
   await expect(page.locator('[data-sidebar-right-expand]'), '宿主的侧边栏按钮仍在').toBeVisible()
   await expect.poll(() => onScreenCount(page), { timeout: 30_000 }).toBe(1)
 
-  // 点击 → 底部面板真的展开；**入口随即退场**（它只在未展开时出现，收起交给面板
-  // 自己的 ×），所以展开态屏幕上一个入口都不该有。
+  // 点击 → 打开态 + 底部面板真的展开。
   const bottomEntry = fallback.locator('[data-dsh-bottom-toggle]')
   await bottomEntry.click()
+  await expect(bottomEntry).toHaveAttribute('data-active', 'true')
   await expect(page.locator('[data-dsh-bottom-panel]').first()).toBeVisible()
-  await expect(bottomEntry, '展开后入口退场').toHaveCount(0, { timeout: 30_000 })
-  await expect.poll(() => onScreenCount(page), { timeout: 30_000 }).toBe(0)
 
-  // 发出第一条消息 → 会话脱离 blank：备用入口退场，入口交回会话头。
+  // 发出第一条消息 → 会话脱离 blank：备用入口退场，入口交回会话头，仍只有一套。
   await sendFirstMessage(page)
   await expect(fallback, '会话头恢复后备用入口退场').toHaveCount(0, { timeout: 60_000 })
-  // 用面板自己的 × 收起 → 会话头那个「展开」入口回来，且仍然只有一套。
-  await page.locator('[data-dsh-bottom-panel] [class*="bottomClose"]').first().click()
   await expect.poll(() => onScreenCount(page), { timeout: 30_000 }).toBe(1)
 
   expect(pageErrors, 'uncaught page errors').toEqual([])

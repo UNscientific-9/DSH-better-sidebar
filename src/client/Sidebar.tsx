@@ -771,30 +771,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
 }
 
-/**
- * The control that EXPANDS the bottom workbench (see
- * sidebar/bottom-toggle.tsx — registered into DSH's session header).
- *
- * **只在未展开时出现**：展开态由面板自己的收起控件（`.bottomClose`，面板页签条
- * 右端那个 ×）负责，头部再来一个「收起」既冗余、又多一个要跟宿主 chrome 抢位置的
- * 状态。收起后本按钮重新出现。
- */
+/** The header control that expands/collapses the bottom workbench (see
+ *  sidebar/bottom-toggle.tsx — registered into DSH's session header). */
 export function BottomDockToggle(props: { store: SidebarStore }) {
   const { store } = props
   const snapshot = useSyncExternalStore(
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot(), [store]),
   )
-  if (snapshot.state?.bottomOpen === true) return null
-  const label = t('expandBottomPanel')
+  const open = snapshot.state?.bottomOpen === true
+  const label = open ? t('collapseBottomPanel') : t('expandBottomPanel')
   return (
     <Tooltip label={label} side="bottom" delayMs={500}>
       <button
         type="button"
         className={css.toggleButton}
         data-dsh-bottom-toggle
+        data-active={open ? 'true' : undefined}
         aria-label={label}
-        aria-pressed={false}
+        aria-pressed={open}
         onClick={() => { store.reduce(toggleBottomPanel) }}
       >
         <IconPanelBottomOutline16 size={15} />
