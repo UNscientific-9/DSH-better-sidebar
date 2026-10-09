@@ -165,12 +165,53 @@ describe('dock fallback（空白会话入口）', () => {
       await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
       const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
       expect(shell, '空白会话里备用入口应当在').not.toBeNull()
-      // 464 被占 → 再让一格到 428；停在 464 就是压在 Fullscreen 上。
-      expect(shell!.style.left, '占位时必须继续左移，不能停在 Fullscreen 上').toBe('428px')
+      // 464 被占 → 4px 步长退到第一个整格都不碰 Fullscreen(464..492) 的槽位 432
+      // （右缘采样点 432+26=458 ≤ 460）。停在 464 就是压在 Fullscreen 上。
+      expect(shell!.style.left, '占位时必须继续左移，不能停在 Fullscreen 上').toBe('432px')
     } finally {
       unmount()
       anchor.remove()
       fullscreen.remove()
+    }
+  })
+
+  // 页签芯片**不是** `button` / `[role="button"]`，按角色筛元素筛不到它们 —— 页签一多，
+  // 「让位」就会停在芯片上（用户报的「tab 多的时候位置也错误」）。真实浏览器走命中测试：
+  // 该点下面整摞元素只要有不透明/可交互的就算占着。这里把命中测试桩成「前两个槽位被
+  // 页签盖住」，断言入口继续左移。
+  it('steps past tab chips that are not buttons (hit-test occupancy)', async () => {
+    phaseIs(true)
+    const rect = (left: number, top: number) => () => ({
+      x: left, y: top, left, top, width: 28, height: 28, right: left + 28, bottom: top + 28,
+      toJSON: () => ({}),
+    }) as DOMRect
+    const anchor = document.createElement('button')
+    anchor.setAttribute('data-sidebar-right-toggle', 'true')
+    anchor.getBoundingClientRect = rect(500, 10)
+    document.body.append(anchor)
+    // 一个「芯片」：不是 button，但有背景色 → 命中测试必须判它占位。
+    const chip = document.createElement('div')
+    chip.setAttribute('data-test-chip', 'true')
+    chip.style.backgroundColor = 'rgb(40, 40, 40)'
+    document.body.append(chip)
+    const original = document.elementsFromPoint
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      writable: true,
+      value: (x: number) => (x > 430 ? [chip] : []),
+    })
+    const { unmount } = renderDockFallback()
+    try {
+      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
+      expect(shell, '空白会话里备用入口应当在').not.toBeNull()
+      // 桩的命中测试说 x > 430 都被芯片盖住 → 右缘采样点(left+26) 必须 ≤ 430，即 left ≤ 404。
+      expect(shell!.style.left, '被页签占位时必须继续左移').toBe('404px')
+    } finally {
+      unmount()
+      anchor.remove()
+      chip.remove()
+      Object.defineProperty(document, 'elementsFromPoint', { configurable: true, writable: true, value: original })
     }
   })
 
