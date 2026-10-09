@@ -33,11 +33,19 @@ function headerEntryPresent(): boolean {
     .some(element => element.closest('[data-dsh-dock-fallback]') === null)
 }
 
-/** 量宿主展开按钮的位置，返回本按钮应放的 top/left。 */
+/**
+ * 量宿主「右侧栏角落控件」的位置，返回本按钮应放的 top/left。
+ *
+ * **锚点必须覆盖该控件的两种形态**：右侧栏**关闭**时它带 `data-sidebar-right-expand`
+ * （aria-label「Open right sidebar」），**打开**时这个属性整个消失、同一个座位换成收起
+ * 按钮 `data-sidebar-right-toggle`。只认前者的话，右侧栏一打开就会落到下面的视口兜底
+ * 坐标（`innerWidth - 44`），而那里正是宿主自己的角落按钮群——备用入口于是精确压在
+ * 「收起右侧栏」上（实测 2200px 视口下重叠 18px，与用户截图一致）。
+ */
 function measure(): { top: number; left: number } {
-  const expand = document.querySelector('[data-sidebar-right-expand]')
-  if (expand === null) return { top: 8, left: window.innerWidth - BUTTON_SIZE - GAP - 8 }
-  const rect = expand.getBoundingClientRect()
+  const anchor = document.querySelector('[data-sidebar-right-expand], [data-sidebar-right-toggle]')
+  if (anchor === null) return { top: 8, left: window.innerWidth - BUTTON_SIZE - GAP - 8 }
+  const rect = anchor.getBoundingClientRect()
   return {
     top: Math.max(4, rect.top + (rect.height - BUTTON_SIZE) / 2),
     left: Math.max(4, rect.left - GAP - BUTTON_SIZE),
