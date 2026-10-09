@@ -90,6 +90,33 @@ describe('dock fallback（空白会话入口）', () => {
     unmount()
   })
 
+  // 相位是**轮询**来的（blank 期间每 1s 一次），而会话头的入口由宿主在它认为合适的
+  // 时机渲染：两者之间必然存在窗口——更糟的是相位读取失败时按「非 blank」降级、但从未
+  // 成功过一次的会话也可能一直停在 blank。凭相位判定「会话头不可达」因此不够：
+  // 备用入口与会话头入口在版面上是**同一个位置**（都紧邻宿主「Open right sidebar」），
+  // 两个都在时会精确重叠成一团。所以再加一条与相位无关的兜底：会话头那套入口只要
+  // 真的在 DOM 里，备用入口就让位。
+  it('yields to the session header entry whenever the host is rendering it', async () => {
+    phaseIs(true) // 相位仍说 blank —— 正是会重叠的那种不一致
+    const header = document.createElement('div')
+    header.innerHTML = '<button data-dsh-bottom-toggle aria-label="Expand bottom panel"></button>'
+    document.body.append(header)
+    const { unmount } = renderDockFallback()
+    try {
+      // 等相位真的落地（否则断言只是在「还没读到相位」上白过）。
+      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+      expect(vi.mocked(sessionPhase), '相位必须已经读过一次').toHaveBeenCalled()
+      expect(document.querySelector('[data-dsh-dock-fallback]'), '会话头入口在场时备用入口必须让位').toBeNull()
+      expect(
+        document.querySelectorAll('[data-dsh-bottom-toggle]'),
+        '整页仍然只有一个底部入口',
+      ).toHaveLength(1)
+    } finally {
+      unmount()
+      header.remove()
+    }
+  })
+
   it('degrades to nothing when the host route is unavailable', async () => {
     vi.mocked(sessionPhase).mockRejectedValue(new Error('unsupported'))
     const { unmount } = renderDockFallback()

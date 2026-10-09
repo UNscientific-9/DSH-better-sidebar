@@ -4,6 +4,8 @@
 
 ### Unreleased
 
+- 🧷 **修掉「展开底部面板」按钮在会话头与备用入口之间叠成两个**：blank 会话里宿主不渲染会话头，插件的会话头入口随之不可达，于是空白会话专用入口以 `position: fixed` 贴到宿主「Open right sidebar」按钮左侧（#698 / #623）。但**相位判定不足以互斥**——相位是每 1s 轮询来的，而会话头入口由宿主自行决定何时渲染，两者之间必然存在窗口（相位读取失败时还会按「非 blank」降级，一个从未成功读到的会话可能一直停在 blank）；而两套入口在版面上**就是同一个位置**，同时在场即精确重叠成一团。现在除相位外再加一条与相位无关的兜底：**会话头那套入口只要真的在 DOM 里，备用入口就让位**，判别性用例见 `tests/dock-fallback.spec.tsx`（造出「相位说 blank + 会话头入口在场」的不一致状态，还原守卫即红）。最多 500ms 的让位延迟（与位置对齐同一节拍）。
+
 - 🎯 **文件引用终于落到那一行（[#826](https://github.com/omdsh-dev/DSH-better-sidebar/issues/826) 第二半）**：第一半把 `path:131` 的行号从地址上切了下来、文件能打开了，但行号**被解析出来就扔掉**——点开停在第 1 行。现在两种写法合流到同一个字段：`#L131` 由宿主解析成 `navigation.params.line`，`path:131` 由插件在 `src/client/path-line.ts` 切出，都落到 `SidebarTab.line`，再经 `FileViewerProps.line` 交给 viewer；文本编辑器在**到达时定位一次**并高亮该行，越界行号钳到最后一行，区间（`:起-止`）只取起始行、列号丢弃（编辑器只有一处光标）。定位直接写 `view.scrollDOM.scrollTop` 而不是 `scrollIntoView`——后者会走遍每一层可滚动祖先，浏览器缩放时连 window 都算上、把整个侧栏拖上去。**`line` 是瞬态**：`sanitizePersistedTab` 的白名单不含它（与 `revealed` 同处理），链接可能是几天前写的，刷新后不该把读者拽回那一行。**markdown / html 收到行号会先强制切到编辑态再定位**——预览里没有源码行号可放，而它自己挂载时的滚动恢复（`useLayoutEffect`）会和跳转抢同一个 `scrollTop`；引用要的是源码，所以让源码先可见。**公开面纯增量**：`FileViewerProps.line?: number`（§5 已同步），第三方 viewer 忽略它即可。原地把 `a.ts:131` 切到 `a.ts` 时行号会被**清掉**（更新路径比的是当前值而不是「有没有传」），否则每次通知都会把读者弹回去；同一引用重复投递不重复跳，同一文件的新行号照跳。
   - 🧪 测试：`tests/native-tab-line.spec.ts`（6 例：记录铸造 / 宿主 `#L` 片段 / 普通打开不种子 / 新导航改行 / **裸路径清行** / 重复投递保住记录身份）、`tests/text-editor-line-jump.spec.tsx`（6 例：落到指定行 / 越界钳位 / 普通打开不跳 / **markdown 强制切出预览** / 无行号留在预览 / 只落一次），`tests/native-surface.spec.ts` 的 `fileParamsOf` 断言补上 `line` 并加区间与 `行:列` 两例。scroll 那一步刻意不断言（骑在两层嵌套 rAF 之后、且 jsdom 不排版），断言的是同一次 dispatch 的 selection anchor。（贡献者 PR [#865](https://github.com/omdsh-dev/DSH-better-sidebar/pull/865) @yanzhaohui1999）
 
