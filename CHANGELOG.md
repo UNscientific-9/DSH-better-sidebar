@@ -2,7 +2,36 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
-### Unreleased
+### v0.25.0
+
+> 📦 **支持线前移：仅适配 DSH `0.2.0-rc.2+`**（peer 下限 `^0.2.0-rc.2`，CI 与挂载 lane 钉 `@deepseek-ai/dsh@0.2.0-rc.2`）。DSH 的 npm `latest` 现在正是 **0.2.0-rc.2**（不再停在 0.1.7-rc.2），本版就钉在它上面。**0.2.0-rc.1 及更早（含 0.1.7 线）请固定 v0.24.1**——`^0.2.0-rc.2` 对 rc.1 判定为 false，会被宿主的启动兼容性预检整行静默禁用；0.1.7 线的最后支持版是 v0.22.1。本次前移是一次纯声明与钉版变更：0.2.0-rc.2 对本插件消费的宿主面仍是纯增量，运行时零改动。
+
+> 🙏 **本版包含以下贡献者的工作**（按合并先后；括号内为其 PR 带来的能力）：
+> [@NolanHo](https://github.com/NolanHo)（#880 搜索框粘贴路径直开 + 噪声目录名单、#884 子进程输出偶发清空）、
+> [@yanzhaohui1999](https://github.com/yanzhaohui1999)（#865 文件引用落到那一行、#828 行号后缀切分）、
+> [@finley08](https://github.com/finley08)（#890 编辑器显现后重新测量、#859 桌面壳 HTTP 走页面基址、#832 新建文件）、
+> [@ZinChl](https://github.com/ZinChl)（#806 目录命中点击、#809 打包状态按会话、#811 树批量拆分、#813 重启后的子代理、#814 任务折叠守卫）、
+> [@graydovee](https://github.com/graydovee)（#807 空白会话的底部入口）、
+> [@btsd321](https://github.com/btsd321)（#818 tab 条右侧动作）、
+> [@ZhangFengshun](https://github.com/ZhangFengshun)（#641 宿主加载不带会话日志偏移）、
+> [@PerryLink](https://github.com/PerryLink)（#843 目录条目清理）、
+> [@UNscientific-9](https://github.com/UNscientific-9)（#842 checkout 的 `--end-of-options`、#645 引用胶囊）、
+> [@lpf20200901](https://github.com/lpf20200901)（#821 插件目录 memory-delta）、
+> [@dat-lequoc](https://github.com/dat-lequoc)（#837 编辑器可见性重测量）、
+> [@lhh010](https://github.com/lhh010)（#823 插件目录 file-trace）、
+> [@MengJiapeng](https://github.com/MengJiapeng)（#803 多仓库 git 历史）、
+> [@zhanghunuaa](https://github.com/zhanghunuaa)（#802 文件树跟随活动 worktree）、
+> [@mengge237](https://github.com/mengge237)（#817 自动激活保留已开页）、
+> [@Waser750](https://github.com/Waser750)（#840 侧边对话归档线程）、
+> [@suiyideali](https://github.com/suiyideali)（#587 编辑器内查找）、
+> [@wang-kaopu](https://github.com/wang-kaopu)（#612 WSL 外部打开、#523 非 UTF-8 编码、#566/#565/#521 Windows 路径）、
+> [@nyantused-cpun](https://github.com/nyantused-cpun)（#600 编辑器草稿保护）、
+> [@bulingbuling688](https://github.com/bulingbuling688)（#574 工作区提及）、
+> [@ingeb0rga](https://github.com/ingeb0rga)（#845 IME 229 守卫）、
+> [@shyuan-hub](https://github.com/shyuan-hub)（#264 面包屑折叠与排除模式，方向）、
+> [@rijiu915](https://github.com/rijiu915)（#363 Markdown 跨文件锚点，方向）。
+> 谢谢每一位！
+
 
 - 🧷 **右侧面板展开时不再显示底部入口**：宿主右上角在那种状态下是它自己的一簇控件（Split / Fullscreen / Collapse right sidebar），插件的「展开底部面板」挤进去只会跟它们打架 —— 现在右侧栏一展开，头部入口与空白会话的备用入口都退场，收起后重新出现。这条规则把「展开态该把入口摆在哪儿」整个问题去掉了，让位逻辑只需服务收起态（那里宿主的角落只有一个按钮）。**判据必须按「可见」而不是「在不在 DOM 里」**：实测宿主把两个角落控件都留在文档里（落屏时 `data-sidebar-right-expand` 与 `data-sidebar-right-toggle` 各 1 个、而面板已经展开），只查属性会一直读成「没展开」、按钮照旧冒出来。判别性用例见 `tests/dock-fallback.spec.tsx`（造一个可见的 Collapse 控件，还原门即红）。
 
