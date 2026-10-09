@@ -1870,13 +1870,15 @@ export function FileTree(props: {
           if (isLikelyImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
-            commitRename(entry.path, renaming?.value ?? '')
+            // A folded row renders at the chain HEAD while its menu addressed
+            // the TAIL: commit the path the editor was opened for.
+            commitRename(renaming?.path ?? entry.path, renaming?.value ?? '')
           } else if (event.key === 'Escape') {
             event.preventDefault()
             setRenaming(null)
           }
         }}
-        onBlur={() => { commitRename(entry.path, renaming?.value ?? '') }}
+        onBlur={() => { commitRename(renaming?.path ?? entry.path, renaming?.value ?? '') }}
       />
     </div>
   )
