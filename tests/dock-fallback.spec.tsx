@@ -117,6 +117,32 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
+  // 宿主那个角落控件有两种形态：右侧栏关闭时带 `data-sidebar-right-expand`，打开时
+  // 这个属性消失、同一座位换成 `data-sidebar-right-toggle`。只认前者的话，右侧栏一
+  // 打开就落到视口兜底坐标（innerWidth - 44），而那里正是宿主自己的角落按钮群 ——
+  // 备用入口会精确压在「收起右侧栏」上（真机实测重叠 18px，与用户截图一致）。
+  it('anchors to the host corner control in its OPEN form as well', async () => {
+    phaseIs(true)
+    const anchor = document.createElement('button')
+    anchor.setAttribute('data-sidebar-right-toggle', 'true')
+    anchor.getBoundingClientRect = () => ({
+      x: 500, y: 10, left: 500, top: 10, width: 28, height: 28, right: 528, bottom: 38,
+      toJSON: () => ({}),
+    }) as DOMRect
+    document.body.append(anchor)
+    const { unmount } = renderDockFallback()
+    try {
+      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
+      expect(shell, '空白会话里备用入口应当在').not.toBeNull()
+      // 500 - GAP(8) - BUTTON_SIZE(28) = 464；落在视口兜底时会是 innerWidth - 44。
+      expect(shell!.style.left, '锚点应当是宿主打开的角落控件，而不是视口兜底').toBe('464px')
+    } finally {
+      unmount()
+      anchor.remove()
+    }
+  })
+
   it('degrades to nothing when the host route is unavailable', async () => {
     vi.mocked(sessionPhase).mockRejectedValue(new Error('unsupported'))
     const { unmount } = renderDockFallback()
