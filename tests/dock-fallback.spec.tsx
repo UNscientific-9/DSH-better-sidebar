@@ -117,35 +117,9 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
-  // 宿主那个角落控件有两种形态：右侧栏关闭时带 `data-sidebar-right-expand`，打开时
-  // 这个属性消失、同一座位换成 `data-sidebar-right-toggle`。只认前者的话，右侧栏一
-  // 打开就落到视口兜底坐标（innerWidth - 44），而那里正是宿主自己的角落按钮群 ——
-  // 备用入口会精确压在「收起右侧栏」上（真机实测重叠 18px，与用户截图一致）。
-  it('anchors to the host corner control in its OPEN form as well', async () => {
-    phaseIs(true)
-    const anchor = document.createElement('button')
-    anchor.setAttribute('data-sidebar-right-toggle', 'true')
-    anchor.getBoundingClientRect = () => ({
-      x: 500, y: 10, left: 500, top: 10, width: 28, height: 28, right: 528, bottom: 38,
-      toJSON: () => ({}),
-    }) as DOMRect
-    document.body.append(anchor)
-    const { unmount } = renderDockFallback()
-    try {
-      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
-      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
-      expect(shell, '空白会话里备用入口应当在').not.toBeNull()
-      // 500 - GAP(8) - BUTTON_SIZE(28) = 464；落在视口兜底时会是 innerWidth - 44。
-      expect(shell!.style.left, '锚点应当是宿主打开的角落控件，而不是视口兜底').toBe('464px')
-    } finally {
-      unmount()
-      anchor.remove()
-    }
-  })
-
-  // 宿主的角落控件是肩并肩一簇（实测：Split / Fullscreen / Collapse 各 28px、间隔 8px）。
-  // 只往左让一个固定偏移会正好落在**下一个**按钮上（实测精确压住 Fullscreen 28x28px），
-  // 所以让位必须逐个槽位试探到真的空出来。
+  // 定位逻辑现在只服务**收起态**（右侧栏收起时宿主的角落只有「Open right sidebar」
+  // 一个按钮）。让位仍是逐个槽位试探：万一宿主的收起态角落也并排了别的东西，
+  // 固定偏移会正好落在**下一个**按钮上。
   it('keeps stepping left until the slot is free of host buttons', async () => {
     phaseIs(true)
     const rect = (left: number, top: number) => () => ({
@@ -154,7 +128,7 @@ describe('dock fallback（空白会话入口）', () => {
     }) as DOMRect
     // 宿主锚点（打开形态）在 500；紧邻左侧 464..492 上已经站着 Fullscreen。
     const anchor = document.createElement('button')
-    anchor.setAttribute('data-sidebar-right-toggle', 'true')
+    anchor.setAttribute('data-sidebar-right-expand', 'true')
     anchor.getBoundingClientRect = rect(500, 10)
     const fullscreen = document.createElement('button')
     fullscreen.setAttribute('aria-label', 'Fullscreen')
@@ -175,10 +149,8 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
-  // 页签芯片**不是** `button` / `[role="button"]`，按角色筛元素筛不到它们 —— 页签一多，
-  // 「让位」就会停在芯片上（用户报的「tab 多的时候位置也错误」）。真实浏览器走命中测试：
-  // 该点下面整摞元素只要有不透明/可交互的就算占着。这里把命中测试桩成「前两个槽位被
-  // 页签盖住」，断言入口继续左移。
+  // 占位判定走命中测试而不是角色筛选：该点下面整摞元素只要有不透明的小控件就算占着。
+  // 这里把命中测试桩成「前两个槽位被盖住」，断言入口继续左移。
   it('steps past tab chips that are not buttons (hit-test occupancy)', async () => {
     phaseIs(true)
     const rect = (left: number, top: number) => () => ({
@@ -186,7 +158,7 @@ describe('dock fallback（空白会话入口）', () => {
       toJSON: () => ({}),
     }) as DOMRect
     const anchor = document.createElement('button')
-    anchor.setAttribute('data-sidebar-right-toggle', 'true')
+    anchor.setAttribute('data-sidebar-right-expand', 'true')
     anchor.getBoundingClientRect = rect(500, 10)
     document.body.append(anchor)
     // 一个「芯片」：不是 button，但有背景色 → 命中测试必须判它占位。
@@ -212,6 +184,32 @@ describe('dock fallback（空白会话入口）', () => {
       anchor.remove()
       chip.remove()
       Object.defineProperty(document, 'elementsFromPoint', { configurable: true, writable: true, value: original })
+    }
+  })
+
+  // 用户定的规则：**宿主右侧面板展开时不显示这个按钮**。那个状态下宿主右上角
+  // 本来就是自己的一簇控件（Split / Fullscreen / Collapse right sidebar），入口挤进去
+  // 只会跟它们打架 —— 干脆不出现。这条规则同时把「展开态该把入口摆哪儿」整个问题去掉，
+  // 让位/命中测试那套只需要服务收起态。
+  it('renders no entry while the host right panel is expanded', async () => {
+    phaseIs(true)
+    // 可见的 Collapse 控件（rect 非零）＝ 右侧栏展开；收起态的 Open 控件不可见。
+    const hostToggle = document.createElement('button')
+    hostToggle.setAttribute('data-sidebar-right-toggle', 'true')
+    hostToggle.setAttribute('aria-label', 'Collapse right sidebar')
+    hostToggle.getBoundingClientRect = () => ({
+      x: 2000, y: 10, left: 2000, top: 10, width: 28, height: 28, right: 2028, bottom: 38,
+      toJSON: () => ({}),
+    }) as DOMRect
+    document.body.append(hostToggle)
+    const { unmount } = renderDockFallback()
+    try {
+      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+      expect(document.querySelector('[data-dsh-dock-fallback]'), '右侧栏展开时不该有备用入口').toBeNull()
+      expect(document.querySelector('[data-dsh-bottom-toggle]'), '右侧栏展开时不该有底部入口').toBeNull()
+    } finally {
+      unmount()
+      hostToggle.remove()
     }
   })
 
