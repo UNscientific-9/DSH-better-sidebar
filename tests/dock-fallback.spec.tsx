@@ -143,6 +143,37 @@ describe('dock fallback（空白会话入口）', () => {
     }
   })
 
+  // 宿主的角落控件是肩并肩一簇（实测：Split / Fullscreen / Collapse 各 28px、间隔 8px）。
+  // 只往左让一个固定偏移会正好落在**下一个**按钮上（实测精确压住 Fullscreen 28x28px），
+  // 所以让位必须逐个槽位试探到真的空出来。
+  it('keeps stepping left until the slot is free of host buttons', async () => {
+    phaseIs(true)
+    const rect = (left: number, top: number) => () => ({
+      x: left, y: top, left, top, width: 28, height: 28, right: left + 28, bottom: top + 28,
+      toJSON: () => ({}),
+    }) as DOMRect
+    // 宿主锚点（打开形态）在 500；紧邻左侧 464..492 上已经站着 Fullscreen。
+    const anchor = document.createElement('button')
+    anchor.setAttribute('data-sidebar-right-toggle', 'true')
+    anchor.getBoundingClientRect = rect(500, 10)
+    const fullscreen = document.createElement('button')
+    fullscreen.setAttribute('aria-label', 'Fullscreen')
+    fullscreen.getBoundingClientRect = rect(464, 10)
+    document.body.append(anchor, fullscreen)
+    const { unmount } = renderDockFallback()
+    try {
+      await act(async () => { await new Promise(resolve => { setTimeout(resolve, 0) }) })
+      const shell = document.querySelector<HTMLElement>('[data-dsh-dock-fallback]')
+      expect(shell, '空白会话里备用入口应当在').not.toBeNull()
+      // 464 被占 → 再让一格到 428；停在 464 就是压在 Fullscreen 上。
+      expect(shell!.style.left, '占位时必须继续左移，不能停在 Fullscreen 上').toBe('428px')
+    } finally {
+      unmount()
+      anchor.remove()
+      fullscreen.remove()
+    }
+  })
+
   it('degrades to nothing when the host route is unavailable', async () => {
     vi.mocked(sessionPhase).mockRejectedValue(new Error('unsupported'))
     const { unmount } = renderDockFallback()
