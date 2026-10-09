@@ -20,7 +20,7 @@ import { Sidebar } from '../src/client/Sidebar.tsx'
 import { createBetterSidebarService, type BetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import {
-  clearEditorDirty, confirmDiscardDraft, dirtyCount, dirtyCountForSession, editorDirtyRevision,
+  clearEditorDirty, confirmDiscardDraft, dirtyCount, editorDirtyRevision,
   isEditorDirty, setEditorDirty, subscribeEditorDirty,
 } from '../src/client/editor-dirty.ts'
 import { closePathTabs } from '../src/client/tree-mutations.ts'
@@ -162,8 +162,7 @@ describe('editor-dirty registry', () => {
     setEditorDirty('t1', true, 's1', '/tmp/a.ts')
     expect(isEditorDirty('t1', 's1')).toBe(true)
     expect(dirtyCount()).toBe(1)
-    expect(dirtyCountForSession('s1')).toBe(1)
-    expect(dirtyCountForSession('other')).toBe(0)
+    expect(isEditorDirty('t1', 'other')).toBe(false)
     expect(editorDirtyRevision()).toBeGreaterThan(before)
 
     const afterRegister = editorDirtyRevision()
@@ -184,8 +183,7 @@ describe('editor-dirty registry', () => {
     // must be able to exist at once.
     setEditorDirty('t2', true, 's1', '/tmp/a.ts')
     setEditorDirty('t2', true, 's2', '/tmp/b.ts')
-    expect(dirtyCountForSession('s1')).toBe(1)
-    expect(dirtyCountForSession('s2')).toBe(1)
+    expect(dirtyCount()).toBe(2)
     expect(isEditorDirty('t2', 's1')).toBe(true)
     expect(isEditorDirty('t2', 's2')).toBe(true)
   })
@@ -200,7 +198,6 @@ describe('editor-dirty registry', () => {
     setEditorDirty('tab1', false, 's2', '/tmp/b.ts')
     clearEditorDirty('tab1', 's2')
     expect(isEditorDirty('tab1', 's1')).toBe(true)
-    expect(dirtyCountForSession('s1')).toBe(1)
     expect(dirtyCount()).toBe(1)
     // Without a session the read is the conservative one: any session matches.
     expect(isEditorDirty('tab1')).toBe(true)

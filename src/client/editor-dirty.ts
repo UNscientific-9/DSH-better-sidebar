@@ -21,9 +21,8 @@
  * stale entry can never keep a guard armed.
  */
 
-/** One registered draft: the owning session (the guard's scope) and the file. */
+/** One registered draft: the id it was recorded under and the file. */
 interface DirtyEntry {
-  sessionId: string
   tabId: string
   path: string
 }
@@ -56,7 +55,7 @@ export function setEditorDirty(tabId: string, dirty: boolean, sessionId: string,
   }
   const previous = dirtyTabs.get(key)
   if (previous !== undefined && previous.path === path) return
-  dirtyTabs.set(key, { sessionId, tabId, path })
+  dirtyTabs.set(key, { tabId, path })
   notify()
 }
 
@@ -92,15 +91,6 @@ export function isEditorDirty(tabId: string, sessionId?: string): boolean {
     if (entry.tabId === tabId) return true
   }
   return false
-}
-
-/** How many tabs of one session hold unsaved drafts. */
-export function dirtyCountForSession(sessionId: string): number {
-  let count = 0
-  for (const entry of dirtyTabs.values()) {
-    if (entry.sessionId === sessionId) count += 1
-  }
-  return count
 }
 
 /** How many tabs hold unsaved drafts across every session (the unload guard). */
